@@ -1,546 +1,748 @@
-import React, { useState, useEffect, useMemo, useRef, Suspense } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { 
-  useGLTF, 
-  Decal, 
-  Environment, 
-  Center, 
-  useTexture, 
-  AccumulativeShadows, 
-  RandomizedLight,
-  CameraControls,
-  Html,
-  Loader
-} from "@react-three/drei";
+import React, { useState, useEffect, useMemo, Suspense } from "react";
+import { Canvas, createPortal, useThree } from "@react-three/fiber";
+import { useGLTF, Environment, Center, OrbitControls, Decal, Html } from "@react-three/drei";
 import * as THREE from "three";
-import { Joystick } from 'react-joystick-component'; 
-import { 
-  Layers, 
-  PlusCircle, 
-  Settings, 
-  Trash2, 
-  Maximize, 
-  Eye, 
-  Palette, 
-  Camera,
-  RotateCcw, // For Reset
-  Undo2,     // For Undo
-  Check,
-  Type,
-  Image as ImageIcon,
-  ZoomIn,
-  ZoomOut,
-  RefreshCw,
-  Move
-} from "lucide-react";
-import { v4 as uuidv4 } from 'uuid';
 
 /* =========================================
-   1. UTILS & CONSTANTS
+   1. UTILS
    ========================================= */
-const FALLBACK_TEXTURE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
-
-// Preset Camera Views
-const CAMERA_VIEWS = {
-  FRONT: { pos: [0, 0, 4], target: [0, 0, 0] },
-  BACK: { pos: [0, 0, -4], target: [0, 0, 0] },
-  LEFT_SLEEVE: { pos: [-3, 0, 0], target: [0, 0, 0] },
-  RIGHT_SLEEVE: { pos: [3, 0, 0], target: [0, 0, 0] },
-};
-
-const createTextTexture = (text, color = "black") => {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  canvas.width = 1024;
-  canvas.height = 1024;
-  ctx.clearRect(0, 0, 1024, 1024);
-  ctx.fillStyle = color;
-  ctx.font = "bold 180px Arial";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 512, 512);
-  return canvas.toDataURL('image/png');
+const calculateRotation = (normal, userRotationZ) => {
+    const dummy = new THREE.Object3D();
+    dummy.lookAt(normal);
+    dummy.rotateZ(userRotationZ);
+    return [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z];
 };
 
 /* =========================================
-   2. 3D COMPONENTS
+   2. COMPONENTS
    ========================================= */
+const SmartDecal = ({ mesh, data, isSelected }) => {
+    const { url, pos, normal, scale, rotation: userRotation } = data;
+    const [texture, setTexture] = useState(null);
+    const [aspectRatio, setAspectRatio] = useState(1);
+    const { gl } = useThree();
 
-const DecalLayer = ({ layer }) => {
-  const texture = useTexture(layer.url || FALLBACK_TEXTURE);
-  
-  return (
-    <Decal
-      position={[layer.x, layer.y, layer.z]}
-      rotation={[layer.rotX || 0, layer.rotY || 0, layer.rotZ || 0]}
-      scale={[layer.scale, layer.scale, layer.depth || 0.2]} 
-    >
-      <meshStandardMaterial 
-        map={texture} 
-        transparent 
-        opacity={layer.opacity} 
-        polygonOffset 
-        polygonOffsetFactor={-1 * layer.order} 
-        depthTest={true} 
-        depthWrite={false} 
-        roughness={0.5}
-        side={THREE.FrontSide} // Prevents projection on the back
-        name="DecalMaterial"   // Crucial: Used to exclude this from color updates
-      />
-    </Decal>
-  );
+    useEffect(() => {
+        if (!url) return;
+        new THREE.TextureLoader().load(url, (tex) => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.anisotropy = gl.capabilities.getMaxAnisotropy();
+            if (tex.image) {
+                setAspectRatio(tex.image.width / tex.image.height);
+            }
+            setTexture(tex);
+        });
+    }, [url, gl]);
+
+    const finalRotation = useMemo(() => {
+        const n = normal ? new THREE.Vector3(...normal) : new THREE.Vector3(0, 0, 1);
+        return calculateRotation(n, userRotation ?? 0);
+    }, [normal, userRotation]);
+
+    if (!pos || !texture) return null;
+
+    const safeScale = scale ?? 0.4;
+
+    return (
+        <Decal
+            position={pos}
+            rotation={finalRotation}
+            scale={[safeScale * aspectRatio, safeScale, 0.1]}
+        >
+            <meshStandardMaterial 
+                map={texture}
+                transparent
+                polygonOffset
+                polygonOffsetFactor={-4}
+                depthTest={true}
+                depthWrite={false}
+                roughness={0.2}
+                emissive={isSelected ? "#222" : "#000"}
+            />
+        </Decal>
+    );
 };
 
-const EditableModel = ({ modelUrl, layers, setLayers, selectedId, setIsDragging, onLayerChange }) => {
-  const gltf = useGLTF(modelUrl);
-  const scene = useMemo(() => gltf.scene.clone(), [gltf.scene]);
+/* =========================================
+   3. MODEL VIEWER (INSPECTOR MODE)
+   ========================================= */
+const ModelViewer = ({ 
+  url, 
+  setControlsEnabled, 
+  allowedMeshNames, 
+  decals,
+  setDecals,
+  zoneSettings, 
+  setZoneSettings,
+  selectedMeshName,
+  setSelectedMeshName,
+  onLoadHierarchy,
+  showWireframe,
+  meshRefs,     
+  setMeshRefs,
+  mode,             
+  toggleAllowedMesh 
+}) => {
+  const gltf = useGLTF(url);
+  const [isDragging, setIsDragging] = useState(false);
+  const [hoveredMesh, setHoveredMesh] = useState(null);
   
-  // Find Main Mesh
-  const meshData = useMemo(() => {
-    let found = null;
-    scene.traverse((child) => {
-      if (child.isMesh && !found) found = child;
+  const [matTextures, setMatTextures] = useState({});
+
+  useEffect(() => {
+      const handleGlobalPointerUp = () => {
+          setIsDragging(false);
+          setControlsEnabled(true);
+      };
+      window.addEventListener('pointerup', handleGlobalPointerUp);
+      return () => window.removeEventListener('pointerup', handleGlobalPointerUp);
+  }, [setControlsEnabled]);
+
+  useEffect(() => {
+    Object.keys(zoneSettings).forEach(meshName => {
+        const settings = zoneSettings[meshName];
+        if (settings?.material && settings.texture) {
+            if (!matTextures[meshName] || matTextures[meshName].sourceFile !== settings.texture) {
+                new THREE.TextureLoader().load(settings.texture, (tex) => {
+                    tex.colorSpace = THREE.SRGBColorSpace;
+                    tex.flipY = false;
+                    tex.sourceFile = settings.texture;
+                    setMatTextures(prev => ({ ...prev, [meshName]: tex }));
+                });
+            }
+        }
     });
-    return found;
-  }, [scene]);
+  }, [zoneSettings, matTextures]);
 
-  // Drag Logic
+  useEffect(() => {
+    if (!gltf) return;
+    const refs = {};
+    const allMeshNames = [];
+
+    gltf.scene.traverse((child) => {
+      if (child.isMesh) {
+        allMeshNames.push(child.name);
+        refs[child.name] = child;
+        
+        const isAllowed = allowedMeshNames.includes(child.name);
+        // Fallback to default if settings are missing but mesh is allowed
+        const settings = zoneSettings[child.name] || (isAllowed ? { stickers: true, material: false } : null);
+        
+        if (child.material) {
+            if (!child.userData.originalMat) {
+                child.userData.originalMat = child.material.clone();
+            }
+            
+            if (mode === 'setup') {
+                child.material.wireframe = showWireframe || isAllowed;
+                let highlightColor = 0x000000;
+                if (settings?.stickers && settings?.material) highlightColor = 0x008888;
+                else if (settings?.material) highlightColor = 0x004488;
+                else if (settings?.stickers) highlightColor = 0x004400;
+
+                child.material.emissive = new THREE.Color(isAllowed ? highlightColor : 0x000000);
+                child.material.color = new THREE.Color(isAllowed ? 0x88ff88 : 0xffffff);
+                child.material.map = child.userData.originalMat.map; 
+            } 
+            else {
+                child.material.wireframe = showWireframe;
+                child.material.emissive = new THREE.Color(0x000000);
+                
+                if (settings?.material) {
+                    const loadedTex = matTextures[child.name];
+                    if (loadedTex) {
+                        child.material.map = loadedTex;
+                        child.material.color.set(0xffffff);
+                    } else if (settings.color) {
+                        child.material.map = null; 
+                        child.material.color.set(settings.color);
+                    } else {
+                        child.material.color.copy(child.userData.originalMat.color);
+                        child.material.map = child.userData.originalMat.map;
+                    }
+                } else {
+                     child.material.color.copy(child.userData.originalMat.color);
+                     child.material.map = child.userData.originalMat.map;
+                }
+                child.material.needsUpdate = true;
+            }
+        }
+      }
+    });
+    
+    setMeshRefs(refs);
+    if (onLoadHierarchy) onLoadHierarchy([...new Set(allMeshNames)].sort());
+
+  }, [gltf, allowedMeshNames, onLoadHierarchy, showWireframe, setMeshRefs, mode, zoneSettings, matTextures]);
+
+  useEffect(() => {
+      const newDecals = { ...decals };
+      let changed = false;
+
+      Object.keys(newDecals).forEach(meshName => {
+          const decal = newDecals[meshName];
+          const mesh = meshRefs[meshName];
+          
+          if (decal.url && !decal.pos && mesh) {
+             mesh.geometry.computeBoundingBox();
+             const center = new THREE.Vector3();
+             mesh.geometry.boundingBox.getCenter(center);
+             
+             newDecals[meshName] = {
+                 ...decal,
+                 pos: [center.x, center.y, center.z],
+                 normal: [0, 0, 1] 
+             };
+             changed = true;
+          }
+      });
+
+      if (changed) setDecals(newDecals);
+  }, [decals, meshRefs, setDecals]);
+
   const handlePointerDown = (e) => {
+    const meshName = e.object.name;
     e.stopPropagation();
-    if (selectedId) setIsDragging(true);
-  };
 
-  const handlePointerUp = (e) => {
-    e.stopPropagation();
-    setIsDragging(false);
-    // Trigger history save on drag end if needed
-    if(selectedId && onLayerChange) onLayerChange(); 
+    if (mode === 'setup') {
+        toggleAllowedMesh(meshName);
+        return;
+    }
+
+    if (allowedMeshNames.includes(meshName)) {
+        setSelectedMeshName(meshName);
+        // ✅ FIX: Default to {stickers: true} if settings are missing for an allowed zone
+        const settings = zoneSettings[meshName] || { stickers: true, material: false };
+
+        if (settings?.stickers) {
+            setIsDragging(true);
+            setControlsEnabled(false);
+            updateDecalPosition(e, meshName);
+        }
+    } else {
+        setSelectedMeshName(null);
+    }
   };
 
   const handlePointerMove = (e) => {
-    if (!selectedId) return;
-    if (e.pointerType === 'mouse' && e.buttons !== 1) return; 
+    if (e.object.name !== hoveredMesh) setHoveredMesh(e.object.name);
 
-    const { point, face } = e;
-    if (!point || !face) return;
-
-    const normal = face.normal.clone();
-    normal.transformDirection(e.object.matrixWorld);
-    const dummy = new THREE.Object3D();
-    dummy.position.copy(point);
-    dummy.lookAt(point.clone().add(normal));
-    
-    setLayers(prev => prev.map(l => {
-      if (l.id === selectedId) {
-        return { 
-          ...l, 
-          x: point.x, y: point.y, z: point.z, 
-          rotX: dummy.rotation.x, rotY: dummy.rotation.y, rotZ: dummy.rotation.z 
-        };
-      }
-      return l;
-    }));
+    if (isDragging && selectedMeshName && e.object.name === selectedMeshName) {
+        e.stopPropagation();
+        updateDecalPosition(e, selectedMeshName);
+    }
+  };
+  
+  const handlePointerOut = () => {
+      setHoveredMesh(null);
   };
 
-  if (!meshData) return null;
+  const updateDecalPosition = (e, meshName) => {
+      const localPoint = e.object.worldToLocal(e.point.clone());
+      let normal = [0, 0, 1];
+      if (e.face && e.face.normal) {
+          normal = [e.face.normal.x, e.face.normal.y, e.face.normal.z];
+      }
+
+      setDecals(prev => {
+          const existingData = prev[meshName] || { scale: 0.4, rotation: 0 };
+          return {
+            ...prev,
+            [meshName]: {
+                ...existingData, 
+                pos: [localPoint.x, localPoint.y, localPoint.z],
+                normal: normal
+            }
+          };
+      });
+  };
 
   return (
-    <mesh
-      geometry={meshData.geometry}
-      material={meshData.material} 
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerMove={handlePointerMove}
-      castShadow
-      receiveShadow
-    >
-      {/* Render Decals */}
-      {layers.map((layer, index) => (
-        <DecalLayer key={layer.id} layer={{...layer, order: index + 1}} />
-      ))}
-    </mesh>
+    <>
+      <gridHelper args={[10, 10, 0x444444, 0x222222]} />
+      <axesHelper args={[2]} />
+
+      <primitive 
+        object={gltf.scene} 
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerOut={handlePointerOut}
+      />
+
+      {Object.keys(decals).map(meshName => {
+          // ✅ FIX: Fallback check for missing settings
+          const settings = zoneSettings[meshName] || { stickers: true };
+          if (!settings.stickers) return null;
+
+          const mesh = meshRefs[meshName];
+          const data = decals[meshName];
+          if (!mesh || !data.url) return null;
+
+          return createPortal(
+              <SmartDecal 
+                  key={meshName}
+                  mesh={mesh}
+                  data={data}
+                  isSelected={selectedMeshName === meshName}
+              />,
+              mesh
+          );
+      })}
+      
+      {mode === 'setup' && hoveredMesh && (
+          <Html position={[0,0,0]} style={{pointerEvents:'none'}}>
+              <div className="bg-black/80 text-white text-xs px-2 py-1 rounded translate-x-4 translate-y-4 whitespace-nowrap border border-white/20">
+                  {hoveredMesh} {allowedMeshNames.includes(hoveredMesh) ? "✅" : ""}
+              </div>
+          </Html>
+      )}
+    </>
   );
 };
 
-// Fixed: Correctly identifies shirt material vs decal material
-const ShirtColorUpdater = ({ color }) => {
-  const { scene } = useThree();
-  useEffect(() => {
-    scene.traverse((child) => {
-      if (child.isMesh && child.material) {
-        // If it's the specific Decal material, SKIP it
-        if (child.material.name === 'DecalMaterial') return;
-        
-        // Otherwise, assume it's the shirt fabric and color it
-        child.material.color.set(color);
-      }
-    });
-  }, [color, scene]);
-  return null;
-}
-
-function ScreenshotHandler({ takeScreenshot, onCaptured }) {
-  const { gl, scene, camera } = useThree();
-  useEffect(() => {
-    if (takeScreenshot) {
-      gl.render(scene, camera);
-      const data = gl.domElement.toDataURL("image/png");
-      const link = document.createElement("a");
-      link.download = `design-${Date.now()}.png`;
-      link.href = data;
-      link.click();
-      onCaptured();
-    }
-  }, [takeScreenshot]);
-  return null;
-}
-
 /* =========================================
-   3. MAIN APP COMPONENT
+   4. MAIN COMPONENT (TESTER DASHBOARD)
    ========================================= */
-
-export default function ProTShirtStudio() {
+export default function Simple3DViewer() {
   const [modelUrl, setModelUrl] = useState(null);
+  const [controlsEnabled, setControlsEnabled] = useState(true);
+  const [mode, setMode] = useState('setup'); 
+
+  const [allowedInput, setAllowedInput] = useState("Photo, Screen");
+  const [hierarchy, setHierarchy] = useState([]); 
+  const [showWireframe, setShowWireframe] = useState(false);
+
+  // New Global Transform State
+  const [modelPos, setModelPos] = useState([0, 0, 0]);
+  const [modelRot, setModelRot] = useState([0, 0, 0]);
+
+  const [decals, setDecals] = useState({});
+  const [zoneSettings, setZoneSettings] = useState({}); 
   
-  // State
-  const [layers, setLayers] = useState([]);
-  const [history, setHistory] = useState([]); // Undo Stack
-  const [selectedId, setSelectedId] = useState(null);
-  const [activePanel, setActivePanel] = useState('none');
-  const [shirtColor, setShirtColor] = useState("#ffffff");
-  
-  // Camera & Interaction
-  const cameraRef = useRef();
-  const [isDragging, setIsDragging] = useState(false);
-  const [screenshotTrigger, setScreenshotTrigger] = useState(false);
+  const [selectedMeshName, setSelectedMeshName] = useState(null);
+  const [meshRefs, setMeshRefs] = useState({});
 
-  // --- HISTORY / UNDO ---
-  const saveHistory = () => {
-    setHistory(prev => [...prev.slice(-10), JSON.stringify(layers)]); // Keep last 10 states
-  };
+  const allowedMeshNames = useMemo(() => {
+    return allowedInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  }, [allowedInput]);
 
-  const handleUndo = () => {
-    if (history.length === 0) return;
-    const lastState = JSON.parse(history[history.length - 1]);
-    setLayers(lastState);
-    setHistory(prev => prev.slice(0, -1));
-    setSelectedId(null);
-  };
-
-  const handleReset = () => {
-    if(window.confirm("Reset all designs?")) {
-        saveHistory();
-        setLayers([]);
-        setShirtColor("#ffffff");
-        setSelectedId(null);
+  const toggleAllowedMesh = (name) => {
+    let current = allowedMeshNames;
+    if (current.includes(name)) {
+        current = current.filter(n => n !== name);
+        const newSettings = { ...zoneSettings };
+        delete newSettings[name];
+        setZoneSettings(newSettings);
+    } else {
+        current.push(name);
+        setZoneSettings(prev => ({ 
+            ...prev, 
+            [name]: { stickers: true, material: false, color: '#ffffff' } 
+        }));
     }
+    setAllowedInput(current.join(', '));
   };
 
-  // --- ACTIONS ---
-  
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
+  const toggleCapability = (name, cap) => {
+      setZoneSettings(prev => {
+          // ✅ FIX: Initialize if missing
+          const current = prev[name] || { stickers: true, material: false, color: '#ffffff' };
+          return {
+            ...prev,
+            [name]: { 
+                ...current, 
+                [cap]: !current[cap] 
+            }
+          };
+      });
+  };
+
+  const setZoneColor = (name, color) => {
+      setZoneSettings(prev => ({
+          ...prev,
+          [name]: { ...prev[name], color: color, texture: null }
+      }));
+  };
+
+  const handleFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
       const url = URL.createObjectURL(file);
-      addLayer(url, "Image");
-    }
+
+      if (selectedMeshName && allowedMeshNames.includes(selectedMeshName)) {
+          updateDecal(selectedMeshName, { url });
+      }
   };
 
-  const handleTextAdd = () => {
-    const text = prompt("Enter text:", "Cool");
-    if (text) {
-      const url = createTextTexture(text);
-      addLayer(url, text);
-    }
+  const updateDecal = (meshName, newData) => {
+      setDecals(prev => ({
+          ...prev,
+          [meshName]: {
+              ...(prev[meshName] || { scale: 0.4, rotation: 0, pos: null, normal: null }),
+              ...newData
+          }
+      }));
   };
 
-  const addLayer = (url, name) => {
-    saveHistory(); // Save before adding
-    const newLayer = {
-      id: uuidv4(), name, url,
-      x: 0, y: 0.04, z: 0.15,
-      rotX: 0, rotY: 0, rotZ: 0,
-      scale: 0.2, 
-      opacity: 1, 
-      depth: 0.2,
-      visible: true,
+  const updateSelectedTransform = (key, value) => {
+      if (!selectedMeshName) return;
+      updateDecal(selectedMeshName, { [key]: value });
+  };
+
+  const handleSaveConfiguration = () => {
+    if (!modelUrl) return;
+
+    const stickerZones = [];
+    const materialZones = [];
+
+    allowedMeshNames.forEach(meshName => {
+        const settings = zoneSettings[meshName] || { stickers: true, material: false };
+        const zoneId = meshName.toLowerCase().replace(/\s+/g, '_');
+        const label = `Custom ${meshName}`;
+
+        if (settings.stickers) {
+            const currentTestDecal = decals[meshName];
+            let defaultPosition = [0, 0, 0];
+            let defaultNormal = [0, 0, 1];
+            let defaultScale = 0.4;
+
+            if (currentTestDecal && currentTestDecal.pos) {
+                defaultPosition = currentTestDecal.pos;
+                defaultNormal = currentTestDecal.normal || [0, 0, 1];
+                defaultScale = currentTestDecal.scale || 0.4;
+            } else {
+                 const mesh = meshRefs[meshName];
+                 if(mesh) {
+                    mesh.geometry.computeBoundingBox();
+                    const center = new THREE.Vector3();
+                    mesh.geometry.boundingBox.getCenter(center);
+                    defaultPosition = [center.x, center.y, center.z];
+                 }
+            }
+
+            stickerZones.push({
+                zoneId,
+                meshName,
+                label: `${label} (Sticker)`,
+                type: 'decal',
+                defaultTransform: {
+                    position: defaultPosition,
+                    normal: defaultNormal,
+                    scale: defaultScale
+                }
+            });
+        } 
+
+        if (settings.material) {
+            materialZones.push({
+                zoneId: `${zoneId}_mat`,
+                meshName,
+                label: `${label} (Material)`,
+                type: 'material',
+                defaultMaterial: {
+                    color: settings.color || '#ffffff'
+                }
+            });
+        }
+    });
+
+    const productDefinition = {
+        modelSource: "YOUR_GLB_URL_HERE.glb",
+        globalTransform: {
+            position: modelPos,
+            rotation: modelRot.map(d => d * Math.PI / 180)
+        },
+        stickerZones,
+        materialZones
     };
-    setLayers([...layers, newLayer]);
-    setSelectedId(newLayer.id);
-    setActivePanel('edit');
+
+    console.log("------------------------------------------");
+    console.log("✅ PRODUCT DEFINITION SAVED");
+    console.log(JSON.stringify(productDefinition, null, 2));
+    console.log("------------------------------------------");
+    alert("Product Definition generated! Check Console (F12).");
   };
 
-  const updateLayer = (prop, value) => {
-    if (!selectedId) return;
-    setLayers(prev => prev.map(l => l.id === selectedId ? { ...l, [prop]: value } : l));
-  };
+  // ✅ FIX: Robust Accessor
+  const activeSettings = selectedMeshName 
+    ? (zoneSettings[selectedMeshName] || { stickers: true, material: false, color: '#ffffff' }) 
+    : null;
 
-  // Camera Utils
-  const handleZoom = (dir) => cameraRef.current?.dolly(dir * 0.5, true);
-  const handleRotate = () => cameraRef.current?.rotate(Math.PI / 4, 0, true);
-  const snapToView = (viewKey) => {
-    const view = CAMERA_VIEWS[viewKey];
-    if (cameraRef.current && view) {
-      cameraRef.current.setLookAt(view.pos[0], view.pos[1], view.pos[2], view.target[0], view.target[1], view.target[2], true);
-    }
-  };
+  const currentScale = decals[selectedMeshName]?.scale ?? 0.4;
+  const currentRotation = decals[selectedMeshName]?.rotation ?? 0;
+  const currentRotationDeg = Math.round(currentRotation * (180 / Math.PI));
 
-  // 1. Initial Uploader
   if (!modelUrl) {
     return (
-      // Changed height to be relative to fit in dashboard
-      <div className="flex flex-col items-center justify-center w-full h-[85vh] bg-neutral-900 text-white p-4 rounded-xl">
-        <div className="border-2 border-dashed border-neutral-700 p-8 rounded-3xl text-center bg-white/5 max-w-sm w-full shadow-2xl">
-          <div className="text-6xl mb-6">👕</div>
-          <h2 className="text-3xl font-black mb-2 tracking-tight">Pro Studio</h2>
-          <p className="text-neutral-400 mb-8 font-medium">Upload .GLB to begin</p>
-          <label className="bg-blue-600 hover:bg-blue-500 transition-all py-4 px-8 rounded-2xl cursor-pointer font-bold flex items-center justify-center gap-3 shadow-lg hover:shadow-blue-500/30 w-full transform hover:scale-105 active:scale-95 duration-200">
-            <span>Select 3D Model</span>
-            <input type="file" accept=".glb,.gltf" className="hidden" onChange={(e) => {
-              const file = e.target.files[0];
-              if(file) setModelUrl(URL.createObjectURL(file));
-            }}/>
+      <div className="flex flex-col items-center justify-center w-full h-screen bg-neutral-900 text-white">
+        <div className="p-8 rounded-2xl border-2 border-dashed border-neutral-700 bg-white/5 text-center">
+          <h2 className="text-2xl font-bold mb-4">3D Model Inspector</h2>
+          <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl font-bold transition-colors inline-block">
+            <span>Upload GLB for Testing</span>
+            <input 
+              type="file" 
+              accept=".glb,.gltf" 
+              className="hidden" 
+              onChange={(e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    setModelUrl(URL.createObjectURL(file));
+                    setDecals({});
+                    setSelectedMeshName(null);
+                    setHierarchy([]);
+                    setModelPos([0,0,0]);
+                    setModelRot([0,0,0]);
+                }
+              }}
+            />
           </label>
         </div>
       </div>
     );
   }
 
-  const selectedLayer = layers.find(l => l.id === selectedId);
-
   return (
-    // MAIN CONTAINER: Relative positioning ensures it respects parent sidebar layout
-    <div className="relative w-full h-[85vh] bg-[#111] text-white font-sans overflow-hidden select-none touch-none rounded-xl shadow-2xl">
+    <div className="w-full h-screen bg-[#111] relative flex">
       
-      {/* HEADER BAR */}
-      <div className="absolute top-0 left-0 right-0 h-16 px-5 flex justify-between items-center z-50 bg-gradient-to-b from-black/90 to-transparent pointer-events-none">
-        <div className="font-black text-xl tracking-wider text-white drop-shadow-md flex items-center gap-2 pointer-events-auto">
-          <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"/>
-          STUDIO
-        </div>
-        
-        {/* Top Right Actions */}
-        <div className="flex gap-2 pointer-events-auto">
-            <button title="Undo" onClick={handleUndo} disabled={history.length === 0} className="w-10 h-10 bg-white/10 border border-white/20 rounded-full flex items-center justify-center backdrop-blur-md active:scale-95 disabled:opacity-30 transition-transform">
-                <Undo2 size={18}/>
-            </button>
-            <button title="Reset All" onClick={handleReset} className="w-10 h-10 bg-red-500/20 border border-red-500/30 text-red-400 rounded-full flex items-center justify-center backdrop-blur-md active:scale-95 transition-transform">
-                <RotateCcw size={18}/>
-            </button>
-        </div>
+      {/* --- LEFT SIDEBAR: HIERARCHY --- */}
+      <div className="w-64 h-full bg-[#1a1a1a] border-r border-white/10 flex flex-col z-10">
+          <div className="p-4 border-b border-white/10">
+              <button onClick={() => setModelUrl(null)} className="w-full bg-white/10 text-white px-3 py-2 rounded mb-4 hover:bg-white/20 text-xs font-bold">← Upload New Model</button>
+              
+              <div className="flex bg-black/50 p-1 rounded-lg mb-4">
+                  <button onClick={() => setMode('setup')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-colors ${mode === 'setup' ? 'bg-blue-600 text-white' : 'text-neutral-500 hover:text-white'}`}>🛠️ Setup</button>
+                  <button onClick={() => setMode('test')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-colors ${mode === 'test' ? 'bg-purple-600 text-white' : 'text-neutral-500 hover:text-white'}`}>🎨 Test</button>
+              </div>
+
+              <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">
+                  {mode === 'setup' ? "Define Capabilities" : "Zone List"}
+              </h3>
+              
+              <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer hover:text-white mb-2">
+                  <input type="checkbox" checked={showWireframe} onChange={e => setShowWireframe(e.target.checked)} className="rounded border-white/20 bg-white/5"/>
+                  Show Wireframe
+              </label>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2">
+              {hierarchy.map(name => {
+                  const isAllowed = allowedMeshNames.includes(name);
+                  // ✅ FIX: Fallback
+                  const settings = zoneSettings[name] || { stickers: true, material: false };
+                  
+                  return (
+                      <div key={name} className="mb-1">
+                          <button
+                            onClick={() => toggleAllowedMesh(name)}
+                            className={`w-full text-left px-3 py-2 text-xs font-mono rounded transition-colors flex items-center justify-between
+                                ${isAllowed ? 'bg-white/10 text-white' : 'text-neutral-500 hover:bg-white/5'}
+                            `}
+                          >
+                              <span className="truncate" title={name}>{name}</span>
+                              {isAllowed && <span className="text-[9px] bg-green-600 text-white px-1 rounded">ON</span>}
+                          </button>
+                          
+                          {/* Capability Toggles */}
+                          {isAllowed && (
+                              <div className="flex gap-1 mt-1 pl-2">
+                                  <button 
+                                    onClick={() => toggleCapability(name, 'stickers')}
+                                    className={`text-[9px] px-2 py-1 rounded flex-1 border transition-colors ${settings?.stickers ? 'bg-blue-600 border-blue-400 text-white' : 'bg-transparent border-white/10 text-neutral-500 hover:bg-white/5'}`}
+                                  >
+                                      Sticker
+                                  </button>
+                                  <button 
+                                    onClick={() => toggleCapability(name, 'material')}
+                                    className={`text-[9px] px-2 py-1 rounded flex-1 border transition-colors ${settings?.material ? 'bg-orange-600 border-orange-400 text-white' : 'bg-transparent border-white/10 text-neutral-500 hover:bg-white/5'}`}
+                                  >
+                                      Material
+                                  </button>
+                              </div>
+                          )}
+                      </div>
+                  )
+              })}
+          </div>
       </div>
 
-      {/* SNAP VIEWS - Top Left (Positioned to avoid sidebar overlap) */}
-      <div className="absolute left-4 top-20 flex flex-col gap-2 z-[40]">
-        <div className="text-[10px] font-bold text-neutral-500 tracking-widest mb-1">VIEWS</div>
-        <ViewBtn label="Front" onClick={() => snapToView('FRONT')} />
-        <ViewBtn label="Back" onClick={() => snapToView('BACK')} />
-        <ViewBtn label="L. Arm" onClick={() => snapToView('LEFT_SLEEVE')} />
-        <ViewBtn label="R. Arm" onClick={() => snapToView('RIGHT_SLEEVE')} />
-      </div>
-
-      {/* CAMERA CONTROLS - Right Side */}
-      <div className="absolute right-4 top-20 flex flex-col gap-3 z-[40]">
-        <div className="text-[10px] font-bold text-neutral-500 tracking-widest mb-1">CAM</div>
-        <ControlBtn icon={ZoomIn} onClick={() => handleZoom(1)} />
-        <ControlBtn icon={ZoomOut} onClick={() => handleZoom(-1)} />
-        <ControlBtn icon={RefreshCw} onClick={handleRotate} />
-        <ControlBtn icon={Camera} onClick={() => setScreenshotTrigger(true)} active />
-      </div>
-
-      {/* 3D CANVAS */}
-      <Canvas shadows camera={{ position: [0, 0, 4], fov: 35 }}>
-        <ambientLight intensity={0.7} />
-        <Environment preset="city" />
-        <Center>
-          <Suspense fallback={<Html center><div className="text-white font-bold animate-pulse text-xl">LOADING...</div></Html>}>
-            <EditableModel 
-              modelUrl={modelUrl} 
-              layers={layers} 
-              setLayers={setLayers}
-              selectedId={selectedId}
-              setIsDragging={setIsDragging}
-              onLayerChange={saveHistory} // Save history on drag end
-            />
-            {/* Color Updater */}
-            <ShirtColorUpdater color={shirtColor} />
-          </Suspense>
-        </Center>
-        <CameraControls ref={cameraRef} makeDefault enabled={!isDragging} minDistance={1} maxDistance={8} dollySpeed={0.5} smoothTime={0.25} />
-        <ScreenshotHandler takeScreenshot={screenshotTrigger} onCaptured={() => setScreenshotTrigger(false)} />
-      </Canvas>
-
-      {/* JOYSTICK (Bottom Left - Floating) */}
-      {selectedId && (
-        <div className="absolute bottom-28 left-6 z-30 opacity-80 hover:opacity-100 transition-opacity">
-           <Joystick 
-             size={80} 
-             baseColor="rgba(255,255,255,0.1)" 
-             stickColor="#3b82f6" 
-             move={(e) => {
-                if(!selectedId) return;
-                setLayers(prev => prev.map(l => {
-                  if(l.id === selectedId) return { ...l, x: l.x + (e.x * 0.005), y: l.y + (e.y * 0.005) };
-                  return l;
-                }));
-             }} 
-             stop={saveHistory} // Save history when joystick released
-             throttle={10}
-           />
-           <div className="text-center text-[10px] text-neutral-400 mt-2 font-bold tracking-wide">MOVE</div>
+      {/* --- CENTER: CANVAS --- */}
+      <div className="flex-1 relative h-full">
+        <div className="absolute top-5 left-5 z-0 pointer-events-none">
+            <h1 className="text-white font-bold text-xl drop-shadow-md">
+                {mode === 'setup' ? "🛠️ Setup Mode" : "🎨 Test Mode"}
+            </h1>
+            <p className="text-neutral-400 text-sm drop-shadow-md max-w-md">
+                {mode === 'setup' 
+                    ? "Click meshes to toggle. Enable Sticker/Material capabilities." 
+                    : "Interact with zones to test visuals."}
+            </p>
         </div>
-      )}
 
-      {/* BOTTOM PANELS */}
-      <div 
-        className={`absolute bottom-[85px] left-0 right-0 bg-[#111]/95 backdrop-blur-xl border-t border-white/10 rounded-t-3xl z-40 transition-transform duration-300 ease-out overflow-hidden shadow-2xl ${activePanel === 'none' ? 'translate-y-full' : 'translate-y-0'}`}
-        style={{ maxHeight: '60vh' }}
-      >
-         <div className="w-full flex justify-center pt-3 pb-1 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => setActivePanel('none')}>
-            <div className="w-12 h-1.5 bg-white/20 rounded-full" />
-         </div>
-         
-         <div className="p-6">
-            {activePanel === 'upload' && (
-                <div className="grid grid-cols-2 gap-4">
-                    <label className="bg-neutral-800 hover:bg-neutral-700 p-6 rounded-2xl flex flex-col items-center gap-3 cursor-pointer transition-all active:scale-95 border border-white/5">
-                        <ImageIcon size={32} className="text-blue-400"/>
-                        <span className="text-sm font-bold">Add Sticker</span>
-                        <input type="file" hidden accept="image/*" onChange={handleImageUpload} />
-                    </label>
-                    <button onClick={handleTextAdd} className="bg-neutral-800 hover:bg-neutral-700 p-6 rounded-2xl flex flex-col items-center gap-3 border border-white/5 text-white transition-all active:scale-95">
-                        <Type size={32} className="text-green-400"/>
-                        <span className="text-sm font-bold">Add Text</span>
-                    </button>
-                </div>
-            )}
+        <Canvas 
+            shadows 
+            camera={{ position: [3, 3, 3], fov: 45 }}
+            onPointerMissed={() => setSelectedMeshName(null)}
+        >
+            <ambientLight intensity={0.8} />
+            <Environment preset="city" />
 
-            {activePanel === 'color' && (
-                <div className="flex flex-col gap-4">
-                    <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-wider">Shirt Color</h3>
-                    <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-                        {['#ffffff', '#000000', '#ff0000', '#0000ff', '#ffff00', '#008000', '#800080', '#ffa500', '#333333', '#1a1a1a', '#550000', '#003300'].map(c => (
-                            <button 
-                                key={c} 
-                                onClick={() => setShirtColor(c)} 
-                                className={`w-14 h-14 rounded-full border-2 shadow-lg flex-shrink-0 transition-transform active:scale-90 ${shirtColor === c ? 'border-blue-500 scale-110' : 'border-white/10'}`}
-                                style={{backgroundColor: c}}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
+            <Suspense fallback={<Html center><div className="text-white font-bold">LOADING...</div></Html>}>
+            <Center position={modelPos} rotation={modelRot.map(d => d * Math.PI / 180)}>
+                <ModelViewer 
+                    url={modelUrl} 
+                    setControlsEnabled={setControlsEnabled}
+                    allowedMeshNames={allowedMeshNames}
+                    decals={decals}
+                    setDecals={setDecals}
+                    zoneSettings={zoneSettings}
+                    setZoneSettings={setZoneSettings}
+                    selectedMeshName={selectedMeshName}
+                    setSelectedMeshName={setSelectedMeshName}
+                    onLoadHierarchy={setHierarchy}
+                    showWireframe={showWireframe}
+                    meshRefs={meshRefs}
+                    setMeshRefs={setMeshRefs}
+                    mode={mode}
+                    toggleAllowedMesh={toggleAllowedMesh}
+                />
+            </Center>
+            </Suspense>
 
-            {activePanel === 'edit' && selectedLayer && (
-                <div className="space-y-6">
-                    <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                        <h3 className="font-bold text-xl truncate max-w-[200px]">{selectedLayer.name}</h3>
-                        <button 
-                            onClick={() => { 
-                                saveHistory();
-                                setLayers(prev => prev.filter(l => l.id !== selectedId)); 
-                                setSelectedId(null); 
-                                setActivePanel('none'); 
-                            }} 
-                            className="bg-red-500/10 hover:bg-red-500/20 text-red-500 p-3 rounded-xl transition-colors"
-                        >
-                            <Trash2 size={20}/>
-                        </button>
-                    </div>
-                    <div className="space-y-6">
-                        <SliderControl label="Scale" value={selectedLayer.scale} min={0.05} max={2.0} step={0.01} onChange={v => updateLayer('scale', v)} />
-                        <SliderControl label="Rotate" value={Math.round((selectedLayer.rotZ || 0) * (180/Math.PI))} min={-180} max={180} step={1} onChange={v => updateLayer('rotZ', v * (Math.PI/180))} displayValue={`${Math.round((selectedLayer.rotZ || 0) * (180/Math.PI))}°`}/>
+            <OrbitControls makeDefault enabled={controlsEnabled} minDistance={0.1} maxDistance={500} />
+        </Canvas>
+
+        {/* --- RIGHT OVERLAY: EDITOR --- */}
+        <div className="absolute top-5 right-5 flex flex-col gap-3 w-64 pointer-events-none">
+            <div className="pointer-events-auto flex flex-col gap-3">
+                
+                {/* 1. MODEL ALIGNMENT (Visible when NO zone is selected) */}
+                {!selectedMeshName && (
+                    <div className="bg-black/80 text-white px-4 py-3 rounded-lg backdrop-blur border border-white/10">
+                        <div className="flex justify-between items-center mb-2">
+                             <h4 className="text-[10px] text-yellow-400 font-bold uppercase">Model Alignment</h4>
+                             <button onClick={() => { setModelPos([0,0,0]); setModelRot([0,0,0]); }} className="text-[9px] text-neutral-400 hover:text-white underline">Reset</button>
+                        </div>
                         
-                        <div className="bg-blue-500/10 p-4 rounded-xl border border-blue-500/20">
-                            <SliderControl 
-                                label="Wrap (Depth)" value={selectedLayer.depth || 0.2} min={0.1} max={1.5} step={0.1} onChange={v => updateLayer('depth', v)} 
-                                displayValue={selectedLayer.depth > 0.6 ? "Full Wrap" : "Flat"}
+                        {/* Position Y (Up/Down) */}
+                        <div className="mb-2">
+                            <div className="flex justify-between text-[10px] text-neutral-400 mb-1">
+                                <span>POS Y (Up/Down)</span>
+                                <span>{modelPos[1].toFixed(1)}</span>
+                            </div>
+                            <input type="range" min="-5" max="5" step="0.1" value={modelPos[1]} onChange={(e) => setModelPos([modelPos[0], parseFloat(e.target.value), modelPos[2]])} className="w-full h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer" />
+                        </div>
+                         {/* Position X (Left/Right) */}
+                         <div className="mb-2">
+                            <div className="flex justify-between text-[10px] text-neutral-400 mb-1">
+                                <span>POS X (Left/Right)</span>
+                                <span>{modelPos[0].toFixed(1)}</span>
+                            </div>
+                            <input type="range" min="-5" max="5" step="0.1" value={modelPos[0]} onChange={(e) => setModelPos([parseFloat(e.target.value), modelPos[1], modelPos[2]])} className="w-full h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer" />
+                        </div>
+
+                         {/* Rotation Y (Spin) */}
+                         <div>
+                            <div className="flex justify-between text-[10px] text-neutral-400 mb-1">
+                                <span>ROTATE Y</span>
+                                <span>{modelRot[1]}°</span>
+                            </div>
+                            <input type="range" min="0" max="360" step="10" value={modelRot[1]} onChange={(e) => setModelRot([modelRot[0], parseInt(e.target.value), modelRot[2]])} className="w-full h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer" />
+                        </div>
+                    </div>
+                )}
+
+                {/* 2. ZONE EDITOR (Visible when Zone IS selected) */}
+                <div className="bg-black/80 text-white px-4 py-3 rounded-lg backdrop-blur border border-white/10">
+                    <span className="text-[10px] text-neutral-400 uppercase font-bold">Currently Editing</span>
+                    <div className="text-sm font-mono font-bold mt-1 text-blue-400 truncate">
+                        {selectedMeshName || "None"}
+                    </div>
+                    {selectedMeshName && (
+                        <div className="text-[10px] text-neutral-500 mt-1 flex gap-2">
+                             {activeSettings?.stickers && <span className="bg-blue-900/50 px-1 rounded text-blue-300">Sticker</span>}
+                             {activeSettings?.material && <span className="bg-orange-900/50 px-1 rounded text-orange-300">Material</span>}
+                        </div>
+                    )}
+                </div>
+
+                {/* --- CONTROLS: DECAL (STICKER) --- */}
+                {mode === 'test' && selectedMeshName && activeSettings?.stickers && (
+                    <div className="border-l-2 border-blue-500 pl-2">
+                         <div className="bg-black/80 text-white px-4 py-3 rounded-lg backdrop-blur border border-white/10 mb-2">
+                            <h4 className="text-[10px] text-blue-400 font-bold mb-2 uppercase">Sticker Settings</h4>
+                            <div className="mb-3">
+                                <div className="flex justify-between text-[10px] font-bold text-neutral-400 mb-1">
+                                    <span>SCALE</span>
+                                    <span>{currentScale.toFixed(2)}</span>
+                                </div>
+                                <input type="range" min="0.05" max="5.0" step="0.05" value={currentScale} onChange={(e) => updateSelectedTransform('scale', parseFloat(e.target.value))} className="w-full h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+                            <div>
+                                <div className="flex justify-between text-[10px] font-bold text-neutral-400 mb-1">
+                                    <span>ROTATION</span>
+                                    <span>{currentRotationDeg}°</span>
+                                </div>
+                                <input type="range" min="0" max="360" step="5" value={currentRotationDeg} onChange={(e) => updateSelectedTransform('rotation', parseInt(e.target.value) * (Math.PI / 180))} className="w-full h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+                        </div>
+                        <div className="bg-black/80 text-white px-4 py-3 rounded-lg backdrop-blur border border-white/10">
+                            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-2">Upload Sticker</label>
+                            <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if(file) updateDecal(selectedMeshName, { url: URL.createObjectURL(file) });
+                                }} 
+                                className="w-full text-xs text-neutral-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-blue-600 file:text-white hover:file:bg-blue-500" 
                             />
-                            <p className="text-[10px] text-blue-300 mt-2 text-center">Increase to wrap around sleeves. Keep low for chest.</p>
                         </div>
-                        <SliderControl label="Opacity" value={selectedLayer.opacity} min={0.1} max={1} step={0.1} onChange={v => updateLayer('opacity', v)} displayValue={`${(selectedLayer.opacity * 100).toFixed(0)}%`}/>
                     </div>
-                </div>
-            )}
-            
-            {activePanel === 'layers' && (
-                <div className="space-y-3">
-                <h3 className="font-bold text-lg mb-4 flex items-center justify-between">
-                    <span>Your Designs</span>
-                    <span className="text-xs bg-white/10 px-2 py-1 rounded text-neutral-400">{layers.length}</span>
-                </h3>
-                {layers.length === 0 && <p className="text-neutral-500 text-center py-8 border-2 border-dashed border-white/5 rounded-2xl">No layers yet. Click + to add one.</p>}
-                {layers.map(l => (
-                    <div key={l.id} onClick={() => { setSelectedId(l.id); setActivePanel('edit'); }} className={`flex items-center justify-between p-4 rounded-xl border transition-all active:scale-[0.98] cursor-pointer ${selectedId === l.id ? 'bg-blue-600/20 border-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>
-                        <div className="flex items-center gap-4">
-                            <img src={l.url} className="w-10 h-10 rounded-lg bg-white/10 object-contain p-1" alt="" />
-                            <span className="font-medium text-sm">{l.name}</span>
+                )}
+
+                {/* --- CONTROLS: MATERIAL (SKIN) --- */}
+                {mode === 'test' && selectedMeshName && activeSettings?.material && (
+                    <div className="border-l-2 border-orange-500 pl-2 mt-2">
+                        <div className="bg-black/80 text-white px-4 py-3 rounded-lg backdrop-blur border border-white/10">
+                            <h4 className="text-[10px] text-orange-400 font-bold mb-2 uppercase">Material / Skin Settings</h4>
+                            
+                            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-2">Base Color</label>
+                            <input 
+                                type="color" 
+                                value={activeSettings.color || '#ffffff'}
+                                onChange={(e) => setZoneColor(selectedMeshName, e.target.value)}
+                                className="w-full h-8 cursor-pointer rounded mb-3"
+                            />
+
+                            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-2">Upload Pattern / Texture</label>
+                            <input 
+                                type="file" 
+                                accept="image/*" 
+                                key={`mat-${selectedMeshName}`} 
+                                onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if(file) {
+                                        setZoneSettings(prev => ({
+                                            ...prev,
+                                            [selectedMeshName]: { ...prev[selectedMeshName], texture: URL.createObjectURL(file) }
+                                        }));
+                                    }
+                                }}
+                                className="w-full text-xs text-neutral-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-orange-600 file:text-white hover:file:bg-orange-500" 
+                            />
+                            <p className="text-[9px] text-neutral-500 mt-2 italic">
+                                Note: Patterns wrap around the whole mesh. For front-only designs, use the Sticker section above.
+                            </p>
                         </div>
-                        {selectedId === l.id && <Check size={20} className="text-blue-400"/>}
                     </div>
-                ))}
-                </div>
-            )}
-         </div>
-      </div>
+                )}
 
-      {/* BOTTOM NAV BAR */}
-      <div className="absolute bottom-0 left-0 right-0 h-[85px] bg-[#141414]/95 backdrop-blur-xl border-t border-white/10 flex justify-around items-start pt-4 z-50 pb-[env(safe-area-inset-bottom)]">
-         <NavButton icon={Layers} label="Layers" active={activePanel === 'layers'} onClick={() => setActivePanel(activePanel === 'layers' ? 'none' : 'layers')} />
-         
-         <div className="relative -top-8">
-            <button 
-                onClick={() => setActivePanel('upload')}
-                className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-[0_0_20px_rgba(59,130,246,0.5)] active:scale-95 transition-transform hover:scale-105"
-            >
-                <PlusCircle size={32} />
-            </button>
-         </div>
-         
-         <NavButton icon={Palette} label="Color" active={activePanel === 'color'} onClick={() => setActivePanel(activePanel === 'color' ? 'none' : 'color')} />
+                <button onClick={handleSaveConfiguration} className="w-full bg-green-600 text-white px-4 py-3 rounded-lg backdrop-blur hover:bg-green-500 transition-colors font-bold text-xs uppercase tracking-wider shadow-lg border border-green-400/30">
+                    💾 Save Product Config
+                </button>
+            </div>
+        </div>
       </div>
-
     </div>
   );
 }
-
-// --- SUB-COMPONENTS ---
-
-const ControlBtn = ({ icon: Icon, onClick, active }) => (
-  <button 
-    onClick={onClick} 
-    className={`w-12 h-12 rounded-full border border-white/20 text-white flex items-center justify-center backdrop-blur-md shadow-lg active:scale-90 transition-all ${active ? 'bg-blue-600 border-blue-400' : 'bg-white/10 hover:bg-white/20'}`}
-  >
-    <Icon size={20} />
-  </button>
-);
-
-const ViewBtn = ({ label, onClick }) => (
-  <button 
-    onClick={onClick} 
-    className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold text-white hover:bg-white/10 active:scale-95 transition-all text-center min-w-[60px]"
-  >
-    {label}
-  </button>
-);
-
-const NavButton = ({ icon: Icon, label, onClick, active }) => (
-  <button onClick={onClick} className={`flex flex-col items-center gap-1.5 w-16 transition-colors ${active ? 'text-blue-400' : 'text-neutral-500 hover:text-neutral-300'}`}>
-    <Icon size={24} strokeWidth={active ? 2.5 : 2} />
-    <span className="text-[10px] font-bold tracking-wide">{label}</span>
-  </button>
-);
-
-const SliderControl = ({ label, value, min, max, step, onChange, displayValue }) => (
-    <div className="space-y-3">
-        <div className="flex justify-between text-sm font-medium">
-            <span className="text-neutral-400">{label}</span>
-            <span className="text-white bg-white/10 px-2 py-0.5 rounded text-xs">{displayValue || value}</span>
-        </div>
-        <input 
-            type="range" min={min} max={max} step={step} value={value} 
-            onChange={e => onChange(parseFloat(e.target.value))} 
-            className="w-full h-2 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400 transition-all"
-        />
-    </div>
-);
