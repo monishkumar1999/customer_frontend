@@ -19,6 +19,7 @@ const SIDEBAR_ITEMS = [
   { icon: User, label: "Customers", href: "/customers" },
   { icon: PieChart, label: "Analytics", href: "/analytics" },
   { icon: Settings, label: "Settings", href: "/settings" },
+  { icon: Settings, label: "UvMap", href: "/uvMap" },
 ];
 
 const Sidebar = ({ isOpen, toggleSidebar }) => {

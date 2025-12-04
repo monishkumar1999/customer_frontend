@@ -6,6 +6,7 @@ import Layout from "../components/layout/Layout"; // <--- Import Layout here
 import { Logins } from "../components/auth/Logins"; 
 import ModularStudio from "../3d/ModularStudio";
 import ProTShirtStudio from "../3d/ProTShirtStudio";
+import UvMap from "../3d/UvMap";
 
 // --- Dummy Components for Demo ---
 const Dashboard = () => <h1 className="text-2xl font-bold">Dashboard Page</h1>;
@@ -39,6 +40,8 @@ const AppRoutes = () => {
         <Route path="/" element={<Navigate to="/admin" replace />} /> 
 
         <Route path="/admin" element={<ProTShirtStudio />} />
+
+        <Route path="/uvMap" element={<UvMap />} />
         <Route path="/orders" element={<Orders />} />
         <Route path="/customers" element={<Customers />} />
         <Route path="/analytics" element={<Analytics />} />
