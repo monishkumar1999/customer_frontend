@@ -321,7 +321,7 @@ function WorkspaceEditor({ uvUrl, stickerUrl, backgroundUrl, fabricColor, onExpo
 /* =========================================================
    4. MAIN APP COMPONENT
    ========================================================= */
-export default function ProTShirtStudio() {
+export default function UvMap() {
   const [glbUrl, setGlbUrl] = useState(null);
   const [meshList, setMeshList] = useState([]);
   const [activeMesh, setActiveMesh] = useState("ALL");
