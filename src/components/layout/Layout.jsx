@@ -9,11 +9,15 @@ import {
   LogOut, 
   LayoutDashboard, 
   ShoppingBag, 
-  PieChart 
+  PieChart,
+  Box,
+  Palette
 } from "lucide-react";
 
 // Sidebar configuration
 const SIDEBAR_ITEMS = [
+  { icon: Box, label: "Product Catalog", href: "/catalog" },
+  { icon: Palette, label: "Customization Studio", href: "/studio" },
   { icon: LayoutDashboard, label: "Dashboard", href: "/" },
   { icon: ShoppingBag, label: "Orders", href: "/orders" },
   { icon: User, label: "Customers", href: "/customers" },
