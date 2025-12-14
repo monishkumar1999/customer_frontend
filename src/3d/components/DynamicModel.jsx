@@ -30,6 +30,13 @@ const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList
                         mat.map = newMap;
                         mat.map.flipY = false;
                         mat.map.colorSpace = THREE.SRGBColorSpace;
+                        // Texture Clarity Improvements
+                        mat.map.minFilter = THREE.LinearMipMapLinearFilter;
+                        mat.map.magFilter = THREE.LinearFilter;
+                        mat.map.anisotropy = 16; // Max sharpness at angles
+                        mat.map.generateMipmaps = true; // Ensure mipmaps for minFilter
+
+                        mat.side = THREE.DoubleSide; // Reverted as requested
                         mat.roughness = materialProps.roughness;
                         mat.metalness = materialProps.metalness;
                         if (materialProps.color) mat.color.set(materialProps.color);
@@ -38,6 +45,7 @@ const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList
                     }
                 } else {
                     // Revert / Default properties
+                    child.material.side = THREE.DoubleSide; // Reverted as requested
                     child.material.roughness = materialProps.roughness;
                     child.material.metalness = materialProps.metalness;
                     child.material.color.set(materialProps.color || "#ffffff");

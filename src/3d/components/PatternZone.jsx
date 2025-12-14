@@ -62,10 +62,15 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
         if (!stageRef.current) return;
         if (trRef.current) trRef.current.nodes([]);
 
-        // OPTIMIZATION: Reduced pixelRatio from 2 to 1.
-        // High resolution is great but causes "browser stuck" issues on frequent updates.
-        // 1.0 is sufficient for 3D textures in this editor context.
-        const uri = stageRef.current.toDataURL({ pixelRatio: 1 });
+        // OPTIMIZATION: Dynamically calculate ratio to match ORIGINAL resolution
+        // The stage is displayed small (w, h), but we want the texture to vary 
+        // to match the maskImg.naturalWidth exactly.
+        // stageWidth * pixelRatio = naturalWidth
+        // (naturalWidth * ratio) * pixelRatio = naturalWidth
+        // pixelRatio = 1 / ratio
+        const exportRatio = ratio > 0 ? (1 / ratio) : 2;
+
+        const uri = stageRef.current.toDataURL({ pixelRatio: exportRatio });
         onUpdateTexture(meshName, uri);
 
         if (selectedId && trRef.current) {
