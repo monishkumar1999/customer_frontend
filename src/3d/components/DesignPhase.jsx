@@ -21,6 +21,21 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
     );
 };
 
+// Simple Loading Screen
+import { Html, useProgress } from "@react-three/drei";
+
+const Loader = () => {
+    const { progress } = useProgress();
+    return (
+        <Html center>
+            <div className="flex flex-col items-center gap-2">
+                <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-xs font-bold text-indigo-600">{progress.toFixed(0)}%</p>
+            </div>
+        </Html>
+    );
+};
+
 const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false); // Closed by default for "removed" feel
 
@@ -141,19 +156,21 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
 
                     {/* Canvas */}
                     <div className="flex-1 bg-gradient-to-br from-indigo-50/40 via-purple-50/20 to-white/50">
-                        <Canvas camera={{ position: [0, 0, 4.5], fov: 45 }} gl={{ preserveDrawingBuffer: true, antialias: true }} dpr={[1, 2]}>
+                        <Canvas camera={{ position: [0, 0, 4.5], fov: 45 }} gl={{ preserveDrawingBuffer: true, antialias: true }} dpr={[1, 1.5]}>
                             <ambientLight intensity={0.8} />
                             <directionalLight position={[2, 5, 2]} intensity={1.5} shadow-mapSize={[1024, 1024]} />
                             <spotLight position={[-5, 5, -5]} intensity={1} color="#ffffff" />
                             <Environment preset="city" />
-                            <Center>
-                                <DynamicModel
-                                    url={glbUrl}
-                                    meshTextures={meshTextures}
-                                    materialProps={globalMaterial}
-                                    setMeshList={() => { }}
-                                />
-                            </Center>
+                            <React.Suspense fallback={<Loader />}>
+                                <Center>
+                                    <DynamicModel
+                                        url={glbUrl}
+                                        meshTextures={meshTextures}
+                                        materialProps={globalMaterial}
+                                        setMeshList={() => { }}
+                                    />
+                                </Center>
+                            </React.Suspense>
                             <OrbitControls minDistance={2} maxDistance={8} enablePan={false} autoRotate autoRotateSpeed={0.5} />
                         </Canvas>
                     </div>

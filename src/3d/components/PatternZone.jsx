@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Stage, Layer, Image as KImage, Transformer, Rect } from "react-konva";
+import { Stage, Layer, Image as KImage, Transformer, Rect, Group } from "react-konva";
 import { X } from "lucide-react";
 
 const useDebounce = (callback, delay) => {
@@ -62,7 +62,10 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
         if (!stageRef.current) return;
         if (trRef.current) trRef.current.nodes([]);
 
-        const uri = stageRef.current.toDataURL({ pixelRatio: 2 });
+        // OPTIMIZATION: Reduced pixelRatio from 2 to 1.
+        // High resolution is great but causes "browser stuck" issues on frequent updates.
+        // 1.0 is sufficient for 3D textures in this editor context.
+        const uri = stageRef.current.toDataURL({ pixelRatio: 1 });
         onUpdateTexture(meshName, uri);
 
         if (selectedId && trRef.current) {
@@ -70,7 +73,8 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
             if (node) trRef.current.nodes([node]);
         }
     };
-    const triggerExport = useDebounce(performExport, 200);
+    // OPTIMIZATION: Increased debounce from 200ms to 300ms to allow smoother dragging.
+    const triggerExport = useDebounce(performExport, 300);
 
     useEffect(() => {
         if (maskImg) triggerExport();
@@ -114,23 +118,31 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
                     onDragEnd={triggerExport}
                 >
                     <Layer>
-                        {/* 1. Base Fabric Color - User controls this via Global Material Color */}
-                        <Rect
-                            width={maskImg.naturalWidth}
-                            height={maskImg.naturalHeight}
-                            fill="#ffffff"
-                            listening={false}
-                        />
-
-                        {/* 2. The Pattern Shape Outline/Mask */}
-                        <KImage
-                            image={maskImg}
-                            width={maskImg.naturalWidth}
-                            height={maskImg.naturalHeight}
-                            opacity={1}
-                            listening={false}
-                            globalCompositeOperation="destination-atop"
-                        />
+                        {/* 2. The Pattern Shape Outline/Mask
+                            User wants the UV SVG/Pattern to be WHITE.
+                            We use the mask to cut out a shape from the bgColor (White).
+                            We leave the background TRANSPARENT so it shows up as "Gray" in the editor (due to CSS bg-gray-800).
+                            This ensures the White Shirt is visible against the Dark Editor.
+                            NOTE: On the 3D model, transparent pixels may render as black depending on the material,
+                            but this is the only way to have "White Shirt on Dark Editor" without complex composting.
+                        */}
+                        <Group>
+                            {/* This Rect provides the fabric color (White) */}
+                            <Rect
+                                width={maskImg.naturalWidth}
+                                height={maskImg.naturalHeight}
+                                fill={bgColor}
+                                listening={false}
+                            />
+                            {/* This KImage uses the maskImg (white shape on transparent) to cut out the declared Rect */}
+                            <KImage
+                                image={maskImg}
+                                width={maskImg.naturalWidth}
+                                height={maskImg.naturalHeight}
+                                listening={false}
+                                globalCompositeOperation="destination-in"
+                            />
+                        </Group>
 
                         {/* Stickers */}
                         {stickers.map((s, i) => (
