@@ -25,6 +25,11 @@ export const useStore = create((set, get) => ({
       island.id === islandId ? { ...island, meshId } : island
     )
   })),
+  updateUvIsland: (id, props) => set(state => ({
+    uvIslands: state.uvIslands.map(island =>
+      island.id === id ? { ...island, ...props } : island
+    )
+  })),
 
   // Phase 3 & 4: Shared Atlas State
   atlasCanvas: null, // HTMLCanvasElement

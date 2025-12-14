@@ -38,6 +38,9 @@ const Loader = () => {
 
 const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false); // Closed by default for "removed" feel
+    const [selectedMesh, setSelectedMesh] = useState(null); // Highlighting Logic
+    const [meshColors, setMeshColors] = useState({}); // Per-mesh coloring
+
 
     return (
         <div className="flex w-full h-full relative bg-[#f8f9fc] overflow-hidden">
@@ -81,16 +84,31 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                         </label>
                     </div>
 
-                    <div className="space-y-4">
-                        <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Material Base</label>
-                        <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm space-y-5">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-zinc-600">Base Color</span>
-                                <div className="flex gap-2 items-center">
-                                    <span className="text-xs font-mono text-zinc-400 uppercase">{globalMaterial.color}</span>
-                                    <input type="color" value={globalMaterial.color} onChange={e => setGlobalMaterial(p => ({ ...p, color: e.target.value }))} className="w-8 h-8 rounded-full border border-zinc-200 cursor-pointer overflow-hidden p-0 shadow-sm" />
+                    {/* Selected Part Color Control */}
+                    {selectedMesh && (
+                        <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                            <label className="text-xs font-bold text-indigo-500 uppercase tracking-widest block">
+                                Selected: {selectedMesh}
+                            </label>
+                            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 shadow-sm space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm font-bold text-indigo-900">Pattern Color</span>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                            type="color"
+                                            value={meshColors[selectedMesh] || globalMaterial.color || "#ffffff"}
+                                            onChange={(e) => setMeshColors(prev => ({ ...prev, [selectedMesh]: e.target.value }))}
+                                            className="w-8 h-8 rounded-full border border-indigo-200 cursor-pointer overflow-hidden p-0 shadow-sm"
+                                        />
+                                    </div>
                                 </div>
                             </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-4">
+                        <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Material Properties</label>
+                        <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm space-y-5">
                             <div className="space-y-2">
                                 <div className="flex justify-between text-xs text-zinc-400">
                                     <span>Roughness</span>
@@ -107,6 +125,8 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                             </div>
                         </div>
                     </div>
+
+
 
                 </div>
             </div>
@@ -131,7 +151,9 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                 maskUrl={cfg.maskUrl}
                                 stickerUrl={activeStickerUrl}
                                 onUpdateTexture={onUpdateTexture}
-                                bgColor={globalMaterial.color}
+                                bgColor={meshColors[meshName] || globalMaterial.color || "#ffffff"}
+                                isSelected={selectedMesh === meshName}
+                                onClick={() => setSelectedMesh(meshName)}
                             />
                         ))}
                         {Object.entries(meshConfig).filter(([_, cfg]) => cfg.maskUrl).length === 0 && (

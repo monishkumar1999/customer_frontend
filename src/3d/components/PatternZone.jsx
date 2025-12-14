@@ -11,7 +11,7 @@ const useDebounce = (callback, delay) => {
 };
 
 // Refactored to look like a "Sewing Pattern" piece
-const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor = "#ffffff" }) => {
+const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor = "#ffffff", isSelected, onClick }) => {
     const stageRef = useRef(null);
     const [maskImg, setMaskImg] = useState(null);
     const [stickers, setStickers] = useState([]);
@@ -88,10 +88,13 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
     const h = maskImg.naturalHeight * ratio;
 
     return (
-        <div className="relative group">
+        <div
+            className="relative group transition-all duration-300 p-2 z-10"
+            onClick={onClick}
+        >
             {/* Simple Mesh Name & Controls floating above */}
             <div className="absolute -top-6 left-0 flex items-center gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelected ? 'text-indigo-600' : 'text-zinc-500'}`}>
                     {meshName}
                 </span>
                 {stickers.length > 0 && (
@@ -105,8 +108,10 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, bgColor =
             </div>
 
             {/* CANVAS CONTAINER */}
-            {/* Added bg-zinc-200/50 here to creates the "gray place" for the SVG to sit on, visually distinct from the white page */}
-            <div className="bg-gray-800 rounded-lg overflow-hidden" style={{ width: w, height: h }}>
+            <div
+                className={`rounded-lg overflow-hidden transition-all duration-300 bg-gray-800 ${isSelected ? 'ring-4 ring-indigo-500 shadow-xl scale-[1.02]' : ''}`}
+                style={{ width: w, height: h }}
+            >
                 <Stage
                     width={w} height={h}
                     scaleX={ratio} scaleY={ratio}
