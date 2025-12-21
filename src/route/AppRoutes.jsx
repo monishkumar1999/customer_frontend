@@ -2,11 +2,13 @@ import React from "react";
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Layout from "../components/layout/Layout"; // <--- Import Layout here
 import UvMap from "../3d/UvMap";
-import { Logins } from "../components/auth/Logins";
+import LoginPage from "../components/auth/LoginPage";
+import SignupPage from "../components/auth/SignupPage";
 import CategoryManager from "../components/admin/CategoryManager";
 import SubCategoryManager from "../components/admin/SubCategoryManager";
 import ProductList from "../components/products/ProductList";
 import ProductEditor from "../components/products/ProductEditor";
+import LandingPage from "../components/landing/LandingPage";
 
 
 // ----------------------------------
@@ -21,7 +23,9 @@ const ProtectedRoutesWithLayout = () => (
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/login" element={<Logins />} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
       <Route element={<ProtectedRoutesWithLayout />}>
         {/* Redirect root path to catalog for logged-in users */}
 

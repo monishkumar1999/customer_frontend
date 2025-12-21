@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Canvas } from "@react-three/fiber";
-import { Environment, OrbitControls, Center, ContactShadows } from "@react-three/drei";
+import { Environment, OrbitControls, Center, ContactShadows, Html, useProgress } from "@react-three/drei";
 import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save } from "lucide-react";
+import * as THREE from "three";
 import { useStore } from "../../store/useStore";
 
 import DynamicModel from "./DynamicModel";
@@ -25,8 +26,6 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
 };
 
 // Simple Loading Screen
-import { Html, useProgress } from "@react-three/drei";
-
 const Loader = () => {
     const { progress } = useProgress();
     return (
@@ -40,15 +39,13 @@ const Loader = () => {
 };
 
 const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
-    const [sidebarOpen, setSidebarOpen] = useState(false); // Closed by default for "removed" feel
-    const [selectedMesh, setSelectedMesh] = useState(null); // Highlighting Logic
-    const [meshColors, setMeshColors] = useState({}); // Per-mesh coloring
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [selectedMesh, setSelectedMesh] = useState(null);
+    const [meshColors, setMeshColors] = useState({});
 
     // Store
     const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory } = useStore();
     const [isSaving, setIsSaving] = useState(false);
-
-    // Bust cache once on mount to handle the empty file replacement
     const [hdrUrl] = useState(`/hdr/studio_soft.hdr?v=${Date.now()}`);
 
     const handleSaveProduct = async () => {
@@ -110,7 +107,6 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
         }
     };
 
-
     return (
         <div className="flex w-full h-full relative bg-[#f8f9fc] overflow-hidden">
 
@@ -127,13 +123,11 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                 </div>
 
                 <div className="mt-auto">
-                    <button onClick={onBack} className="w-10 h-10 rounded-full hover:bg-zinc-100 flex items-center justify-center text-zinc-400 transition-colors">
-                        <ChevronLeft size={20} />
-                    </button>
+                    {/* ... Back button ... */}
                 </div>
             </div>
 
-            {/* FLOATING DRAWER (ASSETS) - Absolute position so it doesn't shift layout */}
+            {/* FLOATING DRAWER */}
             <div className={`w-80 bg-white/90 backdrop-blur-3xl border-r border-zinc-200/50 flex flex-col z-40 absolute left-20 top-0 bottom-0 shadow-2xl transition-transform duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1.0)] ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
                 <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
                     <div>
@@ -142,8 +136,9 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                     </div>
                     <button onClick={() => setSidebarOpen(false)} className="text-zinc-400 hover:text-zinc-600"><X size={20} /></button>
                 </div>
-                <div className="p-6 flex-1 overflow-y-auto space-y-8">
 
+                <div className="p-6 flex-1 overflow-y-auto space-y-8">
+                    {/* Existing Assets Content */}
                     <div className="space-y-4">
                         <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Uploads</label>
                         <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-zinc-200 rounded-2xl hover:border-indigo-400 hover:bg-indigo-50/50 transition-all cursor-pointer group bg-zinc-50/50">
@@ -182,8 +177,8 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                 <Save size={14} />
                             </button>
                         </div>
+                        {/* ... Material Sliders ... */}
                         <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm space-y-5">
-
                             {/* Roughness */}
                             <div className="space-y-1">
                                 <div className="flex justify-between text-xs text-zinc-400">
@@ -200,7 +195,6 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
                                 />
                             </div>
-
                             {/* Sheen */}
                             <div className="space-y-1">
                                 <div className="flex justify-between text-xs text-zinc-400">
@@ -217,7 +211,6 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
                                 />
                             </div>
-
                             {/* Sheen Roughness */}
                             <div className="space-y-1">
                                 <div className="flex justify-between text-xs text-zinc-400">
@@ -234,8 +227,7 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
                                 />
                             </div>
-
-                            {/* Metalness (Optional Admin Override) */}
+                            {/* Metalness */}
                             <div className="space-y-1 pt-4 border-t border-zinc-100">
                                 <div className="flex justify-between text-xs text-zinc-400">
                                     <span>Metalness</span>
@@ -251,16 +243,12 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
                                 />
                             </div>
-
                         </div>
                     </div>
-
-
-
                 </div>
             </div>
 
-            {/* CENTER: WORKSPACE - Always full width minus the 20 sidebar */}
+            {/* ... CENTER WORKSPACE ... */}
             <div className="flex-1 bg-[#f8f9fc] relative overflow-hidden ml-0">
                 {/* Top Bar */}
                 <div className="absolute top-8 left-8 z-10 pointer-events-none">
@@ -285,19 +273,13 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                 onClick={() => setSelectedMesh(meshName)}
                             />
                         ))}
-                        {Object.entries(meshConfig).filter(([_, cfg]) => cfg.maskUrl).length === 0 && (
-                            <div className="text-center opacity-40 mt-20">
-                                <h3 className="text-2xl font-bold text-zinc-800">No Active Patterns</h3>
-                                <p>Go back to setup and assign SVG shapes to meshes.</p>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>
 
-            {/* RIGHT: FLOATING 3D CARD - Fixed width, anchored right */}
+            {/* RIGHT: FLOATING 3D CARD */}
             <div className="absolute top-6 right-6 bottom-6 w-[450px] pointer-events-none flex flex-col justify-center z-40">
-                <div className="bg-white/70 backdrop-blur-2xl border border-white/50 shadow-[0_30px_60px_rgba(0,0,0,0.1)] rounded-[2.5rem] overflow-hidden pointer-events-auto flex flex-col h-[700px] relative transition-all hover:shadow-[0_40px_80px_rgba(0,0,0,0.15)]">
+                <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden pointer-events-auto flex flex-col h-[700px] relative transition-all border border-zinc-100">
                     {/* 3D Header */}
                     <div className="absolute top-6 left-6 z-10">
                         <span className="bg-white/80 backdrop-blur-xl px-3 py-1 rounded-lg text-[10px] font-black tracking-widest text-zinc-900 border border-white/50 shadow-sm uppercase">
@@ -306,32 +288,38 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                     </div>
 
                     {/* Canvas */}
-                    <div className="flex-1 bg-gradient-to-br from-indigo-50/40 via-purple-50/20 to-white/50">
+                    <div className="flex-1 bg-[#F1F5F9] relative">
                         <Canvas
                             shadows
-                            camera={{ position: [0, 0, 4.5], fov: 45 }}
+                            camera={{ position: [0, 0, 3.5], fov: 40 }}
                             gl={{
                                 preserveDrawingBuffer: true,
                                 antialias: true,
-                                toneMapping: 3, // THREE.ACESFilmicToneMapping
-                                toneMappingExposure: 1
+                                toneMapping: THREE.ACESFilmicToneMapping,
+                                toneMappingExposure: 1.2
                             }}
-                            dpr={[1, 1.5]}
+                            dpr={[1, 2]}
                         >
-                            <ambientLight intensity={0.3} />
-                            <directionalLight
-                                position={[5, 10, 5]}
-                                intensity={0.8}
-                                castShadow
-                                shadow-mapSize={[1024, 1024]}
-                            />
-                            {/* HDR Environment - Cache busted once on mount */}
-                            <Environment files={hdrUrl} background={false} />
+                            <color attach="background" args={['#F1F5F9']} />
 
-                            {/* <Environment preset="city" /> */}
+                            <ambientLight intensity={0.5} />
+
+                            <spotLight
+                                position={[5, 10, 5]}
+                                angle={0.4}
+                                penumbra={0.5}
+                                intensity={1.2}
+                                castShadow
+                                shadow-mapSize={[2048, 2048]}
+                                shadow-bias={-0.0001}
+                            />
+
+                            <pointLight position={[-10, 5, -5]} intensity={0.5} color="#eef2ff" />
+
+                            <Environment preset="city" blur={1} />
 
                             <React.Suspense fallback={<Loader />}>
-                                <Center>
+                                <Center position={[0, -0.2, 0]}>
                                     <DynamicModel
                                         url={glbUrl}
                                         meshTextures={meshTextures}
@@ -340,18 +328,28 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     />
                                 </Center>
                                 <ContactShadows
-                                    position={[0, -1.1, 0]}
-                                    opacity={0.45}
-                                    scale={10}
-                                    blur={2}
+                                    position={[0, -1.4, 0]}
+                                    opacity={0.4}
+                                    scale={20}
+                                    blur={2.5}
+                                    color="#000000"
                                 />
                             </React.Suspense>
-                            <OrbitControls minDistance={2} maxDistance={8} enablePan={false} />
+                            <OrbitControls
+                                makeDefault
+                                minDistance={1.5}
+                                maxDistance={10}
+                                enablePan={false}
+                                enableDamping
+                                dampingFactor={0.05}
+                                minPolarAngle={Math.PI / 4}
+                                maxPolarAngle={Math.PI / 1.8}
+                            />
                         </Canvas>
                     </div>
 
                     {/* Bottom Action Bar */}
-                    <div className="p-6 bg-white/60 backdrop-blur-md border-t border-white/50 flex flex-col gap-3">
+                    <div className="p-6 bg-white border-t border-zinc-100 flex flex-col gap-3">
                         <div className="flex gap-4">
                             <Button
                                 onClick={handleSaveProduct}
