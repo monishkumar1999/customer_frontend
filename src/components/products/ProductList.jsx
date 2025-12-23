@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
-import { Edit2, Package, Search } from 'lucide-react';
+import { Edit2, Package, Search, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const ProductList = () => {
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [navigatingId, setNavigatingId] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
     const navigate = useNavigate();
 
@@ -25,6 +26,26 @@ const ProductList = () => {
 
         fetchProducts();
     }, []);
+
+    const handleEditClick = (productId) => {
+        setNavigatingId(productId);
+        // Small timeout to allow the UI to update if navigation is instant, 
+        // though usually React updates state before navigation effect takes place 
+        // in a separate tick or if navigation suspends.
+        // Actually, navigation might be synchronous if no data loading is bound to the route immediately,
+        // but we want to show the loader until the new page mounts.
+        // Since we can't easily know when the *next* page finishes loading here,
+        // we'll at least show it for the duration of the click handler and standard React update cycle.
+        // However, standard navigate() is fire-and-forget.
+        // If the *destination* component has a heavy load, this loader might just 
+        // disappear when the component unmounts. 
+        // But the user asked for a loading screen *because* it "took some time".
+        // If the bottleneck is simply fetching data *on* the edit page, 
+        // the edit page itself should probably have a loading state. 
+        // BUT, if the delay is just the initial mount or bundle load, this button loader helps.
+
+        navigate(`/product/edit/${productId}`);
+    };
 
     const filteredProducts = products.filter(product =>
         product.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -103,12 +124,18 @@ const ProductList = () => {
                                         </td>
                                         <td className="p-4 text-right pr-6">
                                             <button
-                                                onClick={() => navigate(`/product/edit/${product.id}`)}
-                                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"
+                                                onClick={() => handleEditClick(product.id)}
+                                                disabled={navigatingId === product.id}
+                                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                <Edit2 size={16} />
-                                                Edit
+                                                {navigatingId === product.id ? (
+                                                    <Loader2 size={16} className="animate-spin" />
+                                                ) : (
+                                                    <Edit2 size={16} />
+                                                )}
+                                                {navigatingId === product.id ? 'Loading...' : 'Edit'}
                                             </button>
+
                                         </td>
                                     </tr>
                                 ))

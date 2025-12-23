@@ -4,6 +4,7 @@ import * as THREE from "three";
 import api from "../../api/axios";
 import DesignPhase from "../../3d/components/DesignPhase";
 import { optimizeImage } from "../../utils/imageOptimizer";
+import { useStore } from "../../store/useStore"; // Import useStore
 
 // Helper to construct full URL for static assets
 const getAssetUrl = (path) => {
@@ -32,6 +33,9 @@ const ProductEditor = () => {
     const [globalMaterial, setGlobalMaterial] = useState({ color: "#ffffff", roughness: 0.5, metalness: 0, wireframe: false });
     const [activeStickerUrl, setActiveStickerUrl] = useState(null);
 
+    // -- Store Actions --
+    const { setProductName, setSubcategory } = useStore();
+
     useEffect(() => {
         const fetchProduct = async () => {
             try {
@@ -55,6 +59,10 @@ const ProductEditor = () => {
                         });
                     }
                     setMeshConfig(config);
+
+                    // 3. Populate Store for Edit Mode
+                    setProductName(product.name);
+                    setSubcategory(product.subcategory_id);
                 }
             } catch (error) {
                 console.error("Failed to fetch product", error);
@@ -66,7 +74,7 @@ const ProductEditor = () => {
         if (id) {
             fetchProduct();
         }
-    }, [id]);
+    }, [id, setProductName, setSubcategory]);
 
     const applyTexture = useCallback((meshName, dataUrl) => {
         if (!dataUrl) {
@@ -116,6 +124,7 @@ const ProductEditor = () => {
     return (
         <div className="w-full h-screen bg-[#f8f9fc] text-zinc-900 font-sans overflow-hidden">
             <DesignPhase
+                productId={id} // Pass text ID for update logic
                 glbUrl={glbUrl}
                 meshConfig={meshConfig}
                 meshTextures={meshTextures}
@@ -131,3 +140,4 @@ const ProductEditor = () => {
 };
 
 export default ProductEditor;
+

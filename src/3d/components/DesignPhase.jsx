@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, OrbitControls, Center, ContactShadows, Html, useProgress } from "@react-three/drei";
-import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save } from "lucide-react";
+import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save, Trash, Minus, Plus, Maximize } from "lucide-react";
 import * as THREE from "three";
 import { useStore } from "../../store/useStore";
 
@@ -9,6 +9,8 @@ import DynamicModel from "./DynamicModel";
 import PatternZone from "./PatternZone";
 import api from "../../api/axios";
 import { processWireframeToSolid } from "../utils/maskProcessor";
+
+
 
 // Helper Button
 const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, icon: Icon }) => {
@@ -38,10 +40,45 @@ const Loader = () => {
     );
 };
 
-const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
+const DebouncedColorPicker = ({ value, onChange, className }) => {
+    const [localColor, setLocalColor] = useState(value);
+
+    React.useEffect(() => {
+        setLocalColor(value);
+    }, [value]);
+
+    const handleChange = (e) => {
+        const newVal = e.target.value;
+        setLocalColor(newVal);
+        // Debounce update to parent
+        const timeoutId = setTimeout(() => onChange(newVal), 200);
+        return () => clearTimeout(timeoutId);
+    };
+
+    return (
+        <input
+            type="color"
+            value={localColor}
+            onChange={handleChange}
+            className={className}
+        />
+    );
+};
+
+const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [selectedMesh, setSelectedMesh] = useState(null);
     const [meshColors, setMeshColors] = useState({});
+    const [meshNormals, setMeshNormals] = useState({}); // New state for baked normals
+    const [meshList, setMeshList] = useState([]); // Missing state for mesh list
+
+    // Auto-select first mesh
+    React.useEffect(() => {
+        if (!selectedMesh && meshConfig && Object.keys(meshConfig).length > 0) {
+            const firstMesh = Object.keys(meshConfig).find(key => meshConfig[key].maskUrl);
+            if (firstMesh) setSelectedMesh(firstMesh);
+        }
+    }, [meshConfig, selectedMesh]);
 
     // Store
     const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory } = useStore();
@@ -93,11 +130,19 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
             await Promise.all(processingPromises);
 
             // 3. Send API Request
-            await api.post('/product/create', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
-
-            alert('Product Saved Successfully!');
+            if (productId) {
+                // UPDATE Mode
+                await api.put(`/product/update/${productId}`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+                alert('Product Updated Successfully!');
+            } else {
+                // CREATE Mode
+                await api.post('/product/create', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+                alert('Product Saved Successfully!');
+            }
 
         } catch (error) {
             console.error("Save failed", error);
@@ -105,6 +150,17 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const applyNormal = (meshName, normalUri) => {
+        setMeshNormals(prev => {
+            if (!normalUri) {
+                const newState = { ...prev };
+                delete newState[meshName];
+                return newState;
+            }
+            return { ...prev, [meshName]: normalUri };
+        });
     };
 
     return (
@@ -148,6 +204,28 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                         </label>
                     </div>
 
+                    {/* Active Sticker Control */}
+                    {activeStickerUrl && (
+                        <div className="bg-white border border-zinc-200 rounded-xl p-3 shadow-sm flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-zinc-100 border border-zinc-200 overflow-hidden shrink-0">
+                                    <img src={activeStickerUrl} alt="Active" className="w-full h-full object-contain" />
+                                </div>
+                                <div>
+                                    <p className="text-xs font-bold text-zinc-700">Active Sticker</p>
+                                    <p className="text-[10px] text-zinc-400">Ready to place</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setActiveStickerUrl(null)}
+                                className="w-8 h-8 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 flex items-center justify-center transition-colors"
+                                title="Remove Sticker"
+                            >
+                                <Trash size={16} />
+                            </button>
+                        </div>
+                    )}
+
                     {/* Selected Part Color Control */}
                     {selectedMesh && (
                         <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
@@ -158,10 +236,9 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm font-bold text-indigo-900">Pattern Color</span>
                                     <div className="flex gap-2 items-center">
-                                        <input
-                                            type="color"
+                                        <DebouncedColorPicker
                                             value={meshColors[selectedMesh] || globalMaterial.color || "#ffffff"}
-                                            onChange={(e) => setMeshColors(prev => ({ ...prev, [selectedMesh]: e.target.value }))}
+                                            onChange={(val) => setMeshColors(prev => ({ ...prev, [selectedMesh]: val }))}
                                             className="w-8 h-8 rounded-full border border-indigo-200 cursor-pointer overflow-hidden p-0 shadow-sm"
                                         />
                                     </div>
@@ -244,6 +321,36 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                 />
                             </div>
                         </div>
+                        {/* Fabric Texture */}
+                        <div className="space-y-3 pt-4 border-t border-zinc-100">
+                            <div className="space-y-1">
+                                <div className="flex justify-between text-xs text-zinc-400">
+                                    <span>Fabric Texture</span>
+                                    <span>{materialSettings.fabricStrength}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="2"
+                                    step="0.1"
+                                    value={materialSettings.fabricStrength || 0}
+                                    onChange={(e) => setMaterialSetting("fabricStrength", Number(e.target.value))}
+                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs text-zinc-400">Pattern Type</label>
+                                <select
+                                    value={materialSettings.fabricType || 'plain'}
+                                    onChange={(e) => setMaterialSetting("fabricType", e.target.value)}
+                                    className="w-full text-xs p-2 rounded-lg border border-zinc-200 bg-white text-zinc-700 outline-none focus:border-indigo-500"
+                                >
+                                    <option value="plain">Plain Weave</option>
+                                    <option value="twill">Twill (Denim)</option>
+                                    <option value="knit">Knit</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -258,21 +365,27 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                     </div>
                 </div>
 
-                {/* Canvas Area - Added lots of padding right to avoid 3D card overlap */}
+                {/* Canvas Area - Grid Layout for Pattern Zones */}
                 <div className="w-full h-full overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] bg-[length:32px_32px] p-12 pr-[480px]">
-                    <div className="min-h-full flex flex-wrap gap-10 items-start justify-center content-start pb-20 pt-10">
-                        {Object.entries(meshConfig).filter(([_, cfg]) => cfg.maskUrl).map(([meshName, cfg]) => (
-                            <PatternZone
-                                key={meshName}
-                                meshName={meshName}
-                                maskUrl={cfg.maskUrl}
-                                stickerUrl={activeStickerUrl}
-                                onUpdateTexture={onUpdateTexture}
-                                bgColor={meshColors[meshName] || globalMaterial.color || "#ffffff"}
-                                isSelected={selectedMesh === meshName}
-                                onClick={() => setSelectedMesh(meshName)}
-                            />
-                        ))}
+                    <div className="min-h-full grid grid-cols-2 gap-10 content-start justify-items-center pb-20 pt-10 max-w-5xl mx-auto">
+                        {Object.entries(meshConfig).filter(([_, cfg]) => cfg.maskUrl).map(([meshName, cfg]) => {
+                            const isSelected = selectedMesh === meshName || (!selectedMesh && meshName === Object.keys(meshConfig)[0]);
+                            return (
+                                <PatternZone
+                                    key={meshName}
+                                    meshName={meshName}
+                                    maskUrl={cfg.maskUrl}
+                                    stickerUrl={activeStickerUrl}
+                                    onUpdateTexture={onUpdateTexture}
+                                    onUpdateNormal={applyNormal} // New prop
+                                    fabricType={materialSettings.fabricType} // Pass type
+                                    bgColor={meshColors[meshName] || globalMaterial.color || "#ffffff"}
+                                    isSelected={isSelected}
+                                    onClick={() => setSelectedMesh(meshName)}
+                                    onPlaceSticker={() => setActiveStickerUrl(null)}
+                                />
+                            );
+                        })}
                     </div>
                 </div>
             </div>
@@ -323,8 +436,9 @@ const DesignPhase = ({ glbUrl, meshConfig, meshTextures, globalMaterial, activeS
                                     <DynamicModel
                                         url={glbUrl}
                                         meshTextures={meshTextures}
-                                        materialProps={globalMaterial}
-                                        setMeshList={() => { }}
+                                        meshNormals={meshNormals} // Pass normals
+                                        materialProps={{ color: globalMaterial.color }}
+                                        setMeshList={setMeshList}
                                     />
                                 </Center>
                                 <ContactShadows

@@ -2,10 +2,39 @@ import React, { useMemo, useEffect } from "react";
 import { useGLTF, Center } from "@react-three/drei";
 import { useStore } from "../../store/useStore";
 import * as THREE from "three";
+import { generateFabricNormalMap } from "../utils/textureUtils";
 
-const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList, onMeshLoaded }) => {
+const DynamicModel = React.memo(({ url, meshTextures, meshNormals, materialProps, setMeshList, onMeshLoaded }) => {
     const { scene } = useGLTF(url);
     const clonedScene = useMemo(() => scene.clone(), [scene]);
+
+    // Memoize loader to prevent recreation
+    const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
+
+    // Generate Fabric Normal Map once
+    const materialSettings = useStore(state => state.materialSettings);
+    const fabricMapUrl = useMemo(() => {
+        // Default to 'plain' if not set
+        const type = materialSettings.fabricType || 'plain';
+        return generateFabricNormalMap(512, 512, 8, type);
+    }, [materialSettings.fabricType]);
+    // Load it as a texture
+    // using raw THREE loader for manual control or useLoader if consistent
+    // Since it's a data URL, we can load it directly. 
+    // Ideally useLoader(THREE.TextureLoader, fabricMapUrl) but useMemo manual load is fine for Data URIs to avoid suspense jitter on re-gen
+    const [fabricTexture, setFabricTexture] = React.useState(null);
+
+    useEffect(() => {
+        if (fabricMapUrl) {
+            new THREE.TextureLoader().load(fabricMapUrl, (tex) => {
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                tex.repeat.set(4, 4); // Repeat 4 times
+                setFabricTexture(tex);
+            });
+        }
+    }, [fabricMapUrl]);
+
 
     // Initial Mesh Discovery
     useEffect(() => {
@@ -21,7 +50,7 @@ const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList
     }, [clonedScene, setMeshList, onMeshLoaded]);
 
     // Texture & Material Updates
-    const materialSettings = useStore(state => state.materialSettings);
+    // materialSettings is already declared at the top
 
     useEffect(() => {
         clonedScene.traverse((child) => {
@@ -81,6 +110,25 @@ const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList
                 mat.sheen = materialSettings.sheen;
                 mat.sheenRoughness = materialSettings.sheenRoughness;
 
+                // Apply Normals (Baked Mesh Specific or Global Fabric)
+                if (meshNormals && meshNormals[child.name]) {
+                    // If we have a baked normal map for this mesh, use it.
+                    textureLoader.load(meshNormals[child.name], (normMap) => {
+                        normMap.flipY = false;
+                        mat.normalMap = normMap;
+                        // Use global strength setting for consistency, assuming baked map is just vectors.
+                        mat.normalScale.set(materialSettings.fabricStrength, materialSettings.fabricStrength);
+                        mat.needsUpdate = true;
+                    });
+                } else if (fabricTexture && materialSettings.fabricStrength > 0) {
+                    // Otherwise, use the global tiled fabric map if strength is > 0
+                    mat.normalMap = fabricTexture;
+                    mat.normalScale = new THREE.Vector2(materialSettings.fabricStrength, materialSettings.fabricStrength);
+                } else {
+                    // No normal map
+                    mat.normalMap = null;
+                }
+
                 mat.flatShading = false;
                 mat.clearcoat = 0; // Keeping clearcoat off for now as requested
 
@@ -89,7 +137,7 @@ const DynamicModel = React.memo(({ url, meshTextures, materialProps, setMeshList
                 mat.needsUpdate = true;
             }
         });
-    }, [clonedScene, meshTextures, materialProps, materialSettings]);
+    }, [clonedScene, meshTextures, materialProps, materialSettings, fabricTexture]);
 
     return (
         <Center>

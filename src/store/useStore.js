@@ -24,6 +24,8 @@ export const useStore = create((set, get) => ({
     metalness: 0.0,
     sheen: 0.6,
     sheenRoughness: 0.7,
+    fabricStrength: 0.5, // New: Normal Map Strength
+    fabricType: 'plain', // plain, twill, knit
   },
   setMaterialSetting: (key, value) =>
     set((state) => ({
