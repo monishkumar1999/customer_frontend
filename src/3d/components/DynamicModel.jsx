@@ -4,9 +4,14 @@ import { useStore } from "../../store/useStore";
 import * as THREE from "three";
 import { generateFabricNormalMap } from "../utils/textureUtils";
 
-const DynamicModel = React.memo(({ url, meshTextures, meshNormals, materialProps, setMeshList, onMeshLoaded }) => {
+const DynamicModel = React.memo(React.forwardRef(({ url, meshTextures, meshNormals, materialProps, setMeshList, onMeshLoaded }, ref) => {
     const { scene } = useGLTF(url);
     const clonedScene = useMemo(() => scene.clone(), [scene]);
+
+    // Expose scene via ref
+    React.useImperativeHandle(ref, () => ({
+        scene: clonedScene
+    }), [clonedScene]);
 
     // Memoize loader to prevent recreation
     const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
@@ -144,6 +149,6 @@ const DynamicModel = React.memo(({ url, meshTextures, meshNormals, materialProps
             <primitive object={clonedScene} />
         </Center>
     );
-});
+}));
 
 export default DynamicModel;

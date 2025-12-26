@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 
-import { Stage, Layer, Image as KImage, Transformer, Rect, Group } from "react-konva";
+import { Stage, Layer, Image as KImage, Text, Transformer, Rect, Group } from "react-konva";
 import useImage from 'use-image';
 import { X, Copy, Trash, Layers } from 'lucide-react'; // Added Layers icon
 import { generateFabricNormalMap } from '../utils/textureUtils';
+import FloatingTextToolbar from './FloatingTextToolbar';
+import FloatingImageToolbar from './FloatingImageToolbar';
 
 const useDebounce = (callback, delay) => {
     const timeoutRef = useRef(null);
@@ -14,7 +16,7 @@ const useDebounce = (callback, delay) => {
 };
 
 // Refactored to look like a "Sewing Pattern" piece
-const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateNormal, fabricType = 'plain', bgColor = "#ffffff", isSelected, onClick, onPlaceSticker }) => {
+const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTexture, onUpdateNormal, onSelect, externalUpdate, fabricType = 'plain', bgColor = "#ffffff", isSelected, onClick, onPlaceSticker, onPlaceText }) => {
     const stageRef = useRef(null);
     const normalStageRef = useRef(null); // Parallel stage for normal map
     const [maskImg, setMaskImg] = useState(null);
@@ -72,12 +74,16 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
 
             const newSticker = {
                 id: Date.now().toString(),
+                type: 'image',
                 image: img,
                 x: startX,
                 y: startY,
                 width: 80,
                 height: 80,
+                width: 80,
+                height: 80,
                 rotation: 0,
+                opacity: 1, // Default opacity
                 isFlat: false // Default: blend with fabric (false)
             };
             setStickers(prev => [...prev, newSticker]);
@@ -93,6 +99,37 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
         img.onerror = (err) => console.error("Failed to load sticker image", err);
     };
 
+    const addText = () => {
+        if (!textToPlace) return;
+
+        const startX = maskImg ? (maskImg.naturalWidth / 2) - 50 : 50;
+        const startY = maskImg ? (maskImg.naturalHeight / 2) - 20 : 50;
+
+        const newText = {
+            id: Date.now().toString(),
+            type: 'text',
+            text: textToPlace.text,
+            fontFamily: textToPlace.fontFamily,
+            fill: textToPlace.color,
+            fontSize: 40,
+            x: startX,
+            y: startY,
+            rotation: 0,
+            opacity: 1,
+            scaleX: 1,
+            scaleY: 1,
+            isFlat: false // Default to fabric texture applied
+        };
+
+        setStickers(prev => [...prev, newText]);
+        setSelectedId(newText.id);
+        setTimeout(() => triggerExport(), 100);
+
+        setTimeout(() => {
+            if (onPlaceText) onPlaceText();
+        }, 100);
+    };
+
     // Auto-add sticker if this zone is selected when a new sticker is uploaded
     useEffect(() => {
         if (stickerUrl && isSelected) {
@@ -100,12 +137,47 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
         }
     }, [stickerUrl, isSelected]);
 
+    // Auto-add text if this zone is selected
+    useEffect(() => {
+        if (textToPlace && isSelected) {
+            addText();
+        }
+    }, [textToPlace, isSelected]);
+
     useEffect(() => {
         if (selectedId && trRef.current && stageRef.current) {
             const node = stageRef.current.findOne('#' + selectedId);
             if (node) { trRef.current.nodes([node]); trRef.current.getLayer().batchDraw(); }
         } else if (trRef.current) { trRef.current.nodes([]); }
     }, [selectedId, stickers]);
+
+    // Re-render when fonts are loaded to ensure correct font display
+    useEffect(() => {
+        document.fonts.ready.then(() => {
+            console.log("Fonts loaded, refreshing canvas...");
+            triggerExport();
+        });
+    }, []);
+
+    // Handle External Updates (from Sidebar)
+    useEffect(() => {
+        if (externalUpdate && externalUpdate.meshName === meshName) {
+            if (externalUpdate.changes._deleted) {
+                // Handle Deletion
+                setStickers(prev => prev.filter(s => s.id !== externalUpdate.id));
+                if (selectedId === externalUpdate.id) setSelectedId(null);
+            } else {
+                // Handle Property Update
+                setStickers(prev => prev.map(s => {
+                    if (s.id === externalUpdate.id) {
+                        return { ...s, ...externalUpdate.changes };
+                    }
+                    return s;
+                }));
+            }
+            triggerExport();
+        }
+    }, [externalUpdate, meshName, selectedId]);
 
     const performExport = () => {
         if (!stageRef.current) return;
@@ -140,12 +212,13 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
     }, [bgColor, maskImg, fabricNormalImg]); // Re-export if fabric pattern changes
 
     const deleteSelected = (e) => {
-        e.stopPropagation();
+        if (e && e.stopPropagation) e.stopPropagation();
         if (!selectedId) return;
         setStickers(prev => prev.filter(s => s.id !== selectedId));
         setSelectedId(null);
         setTimeout(triggerExport, 100);
     };
+
 
     const duplicateSticker = (s) => {
         const newSticker = { ...s, id: Date.now().toString(), x: s.x + 20, y: s.y + 20 };
@@ -154,13 +227,66 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
         setTimeout(() => triggerExport(), 100);
     };
 
-    // Toggle between "Fabric Blend" (isFlat=false) and "Patch/Print" (isFlat=true)
-    const toggleStickerMaterial = (s) => {
-        const newStickers = stickers.map(sticker =>
-            sticker.id === s.id ? { ...sticker, isFlat: !sticker.isFlat } : sticker
-        );
-        setStickers(newStickers);
-        setTimeout(() => triggerExport(), 100);
+    const moveForward = (id) => {
+        setStickers(prev => {
+            const index = prev.findIndex(s => s.id === id);
+            if (index === -1 || index === prev.length - 1) return prev;
+            const newArr = [...prev];
+            // Swap with next item
+            const item = newArr[index];
+            newArr[index] = newArr[index + 1];
+            newArr[index + 1] = item;
+            return newArr;
+        });
+        setTimeout(triggerExport, 100);
+    };
+
+    const moveBackward = (id) => {
+        setStickers(prev => {
+            const index = prev.findIndex(s => s.id === id);
+            if (index === -1 || index === 0) return prev;
+            const newArr = [...prev];
+            // Swap with prev item
+            const item = newArr[index];
+            newArr[index] = newArr[index - 1];
+            newArr[index - 1] = item;
+            return newArr;
+        });
+        setTimeout(triggerExport, 100);
+    };
+
+    const moveToFront = (id) => {
+        setStickers(prev => {
+            const index = prev.findIndex(s => s.id === id);
+            if (index === -1) return prev;
+            const newArr = [...prev];
+            const [item] = newArr.splice(index, 1);
+            newArr.push(item);
+            return newArr;
+        });
+        setTimeout(triggerExport, 100);
+    };
+
+    const moveToBack = (id) => {
+        setStickers(prev => {
+            const index = prev.findIndex(s => s.id === id);
+            if (index === -1) return prev;
+            const newArr = [...prev];
+            const [item] = newArr.splice(index, 1);
+            newArr.unshift(item);
+            return newArr;
+        });
+        setTimeout(triggerExport, 100);
+    };
+
+    const flipSticker = (id) => {
+        setStickers(prev => prev.map(s => {
+            if (s.id === id) {
+                return { ...s, scaleX: (s.scaleX || 1) * -1 };
+            }
+            return s;
+        }));
+        setTimeout(triggerExport, 100);
     };
 
     if (!maskImg) return <div className="w-[300px] h-[300px] bg-zinc-200 rounded-lg animate-pulse" />;
@@ -197,44 +323,70 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
                 )}
             </div>
 
-            {/* Context Menu Overlay - Floating "like the image" */}
+            {/* Floating Toolbar (Text) or Context Menu (Image) */}
             {selectedId && (() => {
                 const s = stickers.find(st => st.id === selectedId);
                 if (!s) return null;
-                const menuLeft = (s.x * ratio) + (s.width * ratio) + 12;
+
+                // Calculate positions
+                const scaledX = s.x * ratio;
+                const scaledY = s.y * ratio;
+                const scaledW = (s.width || (s.fontSize * (s.text?.length || 1) * 0.6)) * ratio * (s.scaleX || 1); // Approx width for text if not set
+                // Better width calc for text:
+                // For text, width isn't always set reliably in state until transform. 
+                // But we can estimate center.
+                // FloatingTextToolbar expects center position [left] and top [top]
+
+                // For text types
+                if (s.type === 'text') {
+                    // Center of the sticker
+                    const estimatedWidth = (s.width * (s.scaleX || 1)) || (s.text?.length * s.fontSize * 0.5) || 80;
+                    const centerOffset = (estimatedWidth * ratio) / 2;
+
+                    return (
+                        <FloatingTextToolbar
+                            sticker={s}
+                            position={{
+                                left: scaledX + centerOffset,
+                                top: scaledY
+                            }}
+                            onChange={(updates) => {
+                                setStickers(prev => prev.map(st => st.id === s.id ? { ...st, ...updates } : st));
+                                setTimeout(triggerExport, 100);
+                            }}
+                            onDuplicate={() => duplicateSticker(s)}
+                            onDelete={() => {
+                                setStickers(prev => prev.filter(st => st.id !== s.id)); // Direct delete call
+                                setSelectedId(null);
+                                setTimeout(triggerExport, 100);
+                            }}
+                            onMoveForward={() => moveForward(s.id)}
+                            onMoveBackward={() => moveBackward(s.id)}
+                        />
+                    );
+                }
+
+                // Fallback for Images (Now using FloatingImageToolbar)
+                const menuLeft = (s.x * ratio) + (s.width * s.scaleX * ratio) + 12; // Adjust for scale
                 const menuTop = (s.y * ratio);
 
                 return (
-                    <div
-                        className="absolute z-50 bg-white rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] border border-zinc-100 p-1.5 flex flex-col gap-1 w-36 animate-in fade-in zoom-in-95 duration-200"
-                        style={{ left: Math.min(menuLeft, w - 80), top: Math.max(0, Math.min(menuTop, h - 80)) }}
-                    >
-                        <button
-                            onClick={(e) => { e.stopPropagation(); toggleStickerMaterial(s); }}
-                            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 rounded-lg transition-colors w-full text-left"
-                        >
-                            {/* If isFlat is TRUE, it is "Patch" (No Fabric). If FALSE, it is Fabric. */}
-                            {/* We want to show a CHECK if Fabric is Applied (!isFlat) */}
-                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${!s.isFlat ? 'bg-indigo-600 border-indigo-600' : 'border-zinc-300'}`}>
-                                {!s.isFlat && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
-                            </div>
-                            Apply Fabric Texture
-                        </button>
-                        <div className="h-px bg-zinc-100 my-0.5" />
-                        <button
-                            onClick={(e) => { e.stopPropagation(); duplicateSticker(s); }}
-                            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 rounded-lg transition-colors w-full text-left"
-                        >
-                            <Copy size={13} /> Duplicate
-                        </button>
-                        <div className="h-px bg-zinc-100 my-0.5" />
-                        <button
-                            onClick={deleteSelected}
-                            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 rounded-lg transition-colors w-full text-left"
-                        >
-                            <Trash size={13} /> Delete
-                        </button>
-                    </div>
+                    <FloatingImageToolbar
+                        sticker={s}
+                        position={{
+                            left: (s.x * ratio) + ((s.width * (s.scaleX || 1) * ratio) / 2),
+                            top: (s.y * ratio)
+                        }}
+                        onChange={(updates) => {
+                            setStickers(prev => prev.map(st => st.id === s.id ? { ...st, ...updates } : st));
+                            setTimeout(triggerExport, 100);
+                        }}
+                        onDuplicate={() => duplicateSticker(s)}
+                        onDelete={deleteSelected}
+                        onMoveForward={() => moveForward(s.id)}
+                        onMoveBackward={() => moveBackward(s.id)}
+                        onMoveToFront={() => moveToFront(s.id)}
+                    />
                 );
             })()}
 
@@ -252,6 +404,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
                         const clickedStage = e.target === e.target.getStage();
                         if (clickedStage) {
                             setSelectedId(null);
+                            if (onSelect) onSelect(null);
                         }
                     }}
                     onMouseUp={triggerExport}
@@ -273,8 +426,16 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
                                 height={maskImg.naturalHeight}
                                 fill={bgColor}
                                 listening={true}
-                                onClick={() => { if (stickerUrl) addSticker(); setSelectedId(null); }}
-                                onTap={() => { if (stickerUrl) addSticker(); setSelectedId(null); }}
+                                onClick={() => {
+                                    if (stickerUrl) addSticker();
+                                    else if (textToPlace) addText();
+                                    setSelectedId(null);
+                                }}
+                                onTap={() => {
+                                    if (stickerUrl) addSticker();
+                                    else if (textToPlace) addText();
+                                    setSelectedId(null);
+                                }}
                             />
                             {/* This KImage uses the maskImg (white shape on transparent) to cut out the declared Rect */}
                             <KImage
@@ -286,35 +447,122 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
                             />
                         </Group>
 
-                        {/* Stickers */}
-                        {stickers.map((s, i) => (
-                            <KImage
-                                key={s.id} id={s.id} image={s.image} x={s.x} y={s.y} width={s.width} height={s.height} rotation={s.rotation} draggable
-                                onClick={(e) => { e.cancelBubble = true; setSelectedId(s.id); }}
+                        {/* Stickers / Text */}
+                        {stickers.map((s, i) => {
+                            if (s.type === 'text') {
+                                return (
+                                    <Text
+                                        key={s.id}
+                                        id={s.id}
+                                        text={s.text}
+                                        fontFamily={s.fontFamily}
+                                        fill={s.fill}
+                                        fontSize={s.fontSize}
+                                        x={s.x}
+                                        y={s.y}
+                                        opacity={s.opacity ?? 1}
+                                        rotation={s.rotation}
+                                        scaleX={s.scaleX}
+                                        scaleY={s.scaleY}
+                                        draggable
+                                        onClick={(e) => {
+                                            e.cancelBubble = true;
+                                            setSelectedId(s.id);
+                                            if (onSelect) onSelect({ ...s, meshName });
+                                        }}
+                                        onTap={(e) => {
+                                            e.cancelBubble = true;
+                                            setSelectedId(s.id);
+                                            if (onSelect) onSelect({ ...s, meshName });
+                                        }}
+                                        onTransformEnd={(e) => {
+                                            const node = e.target;
+                                            const newStickers = [...stickers];
+                                            newStickers[i] = {
+                                                ...newStickers[i],
+                                                x: node.x(), y: node.y(),
+                                                rotation: node.rotation(),
+                                                scaleX: node.scaleX(),
+                                                scaleY: node.scaleY()
+                                            };
+                                            // Don't reset scale for text, as it affects font size rendering
+                                            setStickers(newStickers);
+                                            triggerExport();
+                                        }}
+                                        onDragEnd={(e) => {
+                                            const node = e.target;
+                                            const newStickers = [...stickers];
+                                            newStickers[i] = { ...newStickers[i], x: node.x(), y: node.y() };
+                                            setStickers(newStickers);
+                                            triggerExport();
+                                        }}
+                                    />
+                                );
+                            }
+                            return (
+                                <KImage
+                                    key={s.id} id={s.id} image={s.image} x={s.x} y={s.y} width={s.width} height={s.height} opacity={s.opacity ?? 1} rotation={s.rotation} draggable
+                                    onClick={(e) => {
+                                        e.cancelBubble = true;
+                                        setSelectedId(s.id);
+                                        if (onSelect) onSelect({ ...s, meshName });
+                                    }}
+                                    onTap={(e) => {
+                                        e.cancelBubble = true;
+                                        setSelectedId(s.id);
+                                        if (onSelect) onSelect({ ...s, meshName });
+                                    }}
 
-                                onTransformEnd={(e) => {
-                                    const node = e.target;
-                                    const newStickers = [...stickers];
-                                    newStickers[i] = {
-                                        ...newStickers[i],
-                                        x: node.x(), y: node.y(),
-                                        rotation: node.rotation(),
-                                        width: node.width() * node.scaleX(),
-                                        height: node.height() * node.scaleY()
-                                    };
-                                    node.scaleX(1); node.scaleY(1);
-                                    setStickers(newStickers);
-                                    triggerExport();
-                                }}
-                                onDragEnd={(e) => {
-                                    const node = e.target;
-                                    const newStickers = [...stickers];
-                                    newStickers[i] = { ...newStickers[i], x: node.x(), y: node.y() };
-                                    setStickers(newStickers);
-                                    triggerExport();
-                                }}
-                            />
-                        ))}
+                                    onTransformEnd={(e) => {
+                                        const node = e.target;
+                                        const newStickers = [...stickers];
+                                        newStickers[i] = {
+                                            ...newStickers[i],
+                                            x: node.x(), y: node.y(),
+                                            rotation: node.rotation(),
+                                            width: node.width() * node.scaleX(),
+                                            height: node.height() * node.scaleY()
+                                        };
+                                        node.scaleX(1); node.scaleY(1);
+                                        // Preserve flip state if it was flipped (negative scaleX)
+                                        // But Konva transformer might have normalized it. 
+                                        // For Flip to persist, we should probably apply negative width/height or keep scaleX negative.
+                                        // Simplified approach: Just save width/height and reset scale, 
+                                        // BUT if we want to support Flip, we need to respect the sign of scaleX.
+
+                                        // Logic fix: Don't force reset scale to 1 if we want to support flips via scaleX
+                                        // OR: normalize width * scaleX and save that.
+                                        // Let's stick to saving width/height and resetting scale to 1 for simplicity, 
+                                        // UNLESS we want to support flip.
+                                        // If we support flip via scaleX, we shouldn't reset scaleX to 1 blindly.
+
+                                        // BETTER APPROACH for persisted flip:
+                                        // Just save x, y, rotation, and usage of scaleX/scaleY directly.
+                                        // Don't bake scale into width/height.
+
+                                        // Reverting to saving scale instead of baking it:
+                                        newStickers[i] = {
+                                            ...newStickers[i],
+                                            x: node.x(), y: node.y(),
+                                            rotation: node.rotation(),
+                                            scaleX: node.scaleX(),
+                                            scaleY: node.scaleY()
+                                            // width/height remain constant base size
+                                        };
+                                        // Do NOT reset node scale here, let React update it via props
+                                        setStickers(newStickers);
+                                        triggerExport();
+                                    }}
+                                    onDragEnd={(e) => {
+                                        const node = e.target;
+                                        const newStickers = [...stickers];
+                                        newStickers[i] = { ...newStickers[i], x: node.x(), y: node.y() };
+                                        setStickers(newStickers);
+                                        triggerExport();
+                                    }}
+                                />
+                            );
+                        })}
 
                         {/* Selection Guide */}
                         <Transformer
@@ -359,39 +607,68 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, onUpdateTexture, onUpdateN
                             </Group>
 
                             {/* 2. The Stickers (ONLY IF isFlat is TRUE) */}
-                            {/* If isFlat is false, we don't render them here, so the background fabric shows through (blend) */}
-                            {/* If isFlat is true, we render a solid "Neutral Normal" or "Flat Normal" shape to mask the fabric */}
-                            {stickers.map((s) => {
+                            {/* If isFlat is true, we render the sticker as a solid #8080ff shape.
+                                This "patches" the normal map, hiding the fabric texture underneath. */}
+                            {stickers.map(s => {
                                 if (!s.isFlat) return null;
-                                return (
-                                    <Group key={s.id + "_flat"} x={s.x} y={s.y} rotation={s.rotation} width={s.width} height={s.height} offset={{ x: 0, y: 0 }}>
-                                        {/* Note: s.x/y is top-left. Transforming needs care. */}
-                                        {/* Actually, KImage above uses x,y directly. */}
-                                        <Group
-                                            x={0} y={0}
-                                        >
-                                            {/* 1. Draw Image */}
-                                            <KImage
-                                                image={s.image}
-                                                width={s.width}
-                                                height={s.height}
-                                            />
-                                            {/* 2. Composite Blue atop it */}
-                                            <Rect
-                                                width={s.width}
-                                                height={s.height}
-                                                fill="rgb(128,128,255)"
-                                                globalCompositeOperation="source-in"
-                                            />
-                                        </Group>
-                                    </Group>
-                                );
+
+                                if (s.type === 'text') {
+                                    return (
+                                        <Text
+                                            key={s.id}
+                                            {...s}
+                                            fill="#8080ff" // Flat Normal Color
+                                            listening={false}
+                                        />
+                                    );
+                                } else {
+                                    // For Images: Use Helper to Cache and Mask
+                                    return <FlatImageSticker key={s.id} sticker={s} />;
+                                }
                             })}
                         </Layer>
                     </Stage>
                 </div>
             </div>
-        </div>
+        </div >
+    );
+    // End of PatternZone component
+};
+
+// Sub-component to handle isolated masking for Flat Images
+const FlatImageSticker = ({ sticker }) => {
+    const groupRef = React.useRef(null);
+
+    React.useEffect(() => {
+        if (groupRef.current) {
+            groupRef.current.cache();
+        }
+    }, [sticker]);
+
+    return (
+        <Group
+            ref={groupRef}
+            x={sticker.x} y={sticker.y}
+            rotation={sticker.rotation}
+            scaleX={sticker.scaleX}
+            scaleY={sticker.scaleY}
+            width={sticker.width}
+            height={sticker.height}
+        >
+            <KImage
+                image={sticker.image}
+                width={sticker.width}
+                height={sticker.height}
+                listening={false}
+            />
+            <Rect
+                width={sticker.width}
+                height={sticker.height}
+                fill="#8080ff"
+                listening={false}
+                globalCompositeOperation="source-in"
+            />
+        </Group>
     );
 };
 

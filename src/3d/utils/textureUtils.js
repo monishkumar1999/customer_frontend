@@ -36,51 +36,139 @@ export const generateFabricNormalMap = (width = 512, height = 512, scale = 4, ty
     hCtx.lineWidth = scale / 2;
     hCtx.strokeStyle = "#C0C0C0"; // High point of thread
 
-    if (type === 'plain') {
-        const spacing = scale;
-        // Vertical threads
-        for (let x = 0; x <= width; x += spacing) {
-            hCtx.beginPath(); hCtx.moveTo(x, 0); hCtx.lineTo(x, height); hCtx.stroke();
-        }
-        // Horizontal threads
-        for (let y = 0; y <= height; y += spacing) {
-            hCtx.beginPath(); hCtx.moveTo(0, y); hCtx.lineTo(width, y); hCtx.stroke();
-        }
-    } else if (type === 'twill') {
-        // Diagonal lines (Denim)
-        const spacing = scale;
-        for (let offset = -height; offset < width; offset += spacing) {
+  if (type === 'plain') {
+    const spacing = scale;
+    for (let x = 0; x <= width; x += spacing) {
+        hCtx.beginPath(); hCtx.moveTo(x, 0); hCtx.lineTo(x, height); hCtx.stroke();
+    }
+    for (let y = 0; y <= height; y += spacing) {
+        hCtx.beginPath(); hCtx.moveTo(0, y); hCtx.lineTo(width, y); hCtx.stroke();
+    }
+}
+
+/* ---------------- TWILL ---------------- */
+else if (type === 'twill') {
+    const spacing = scale;
+    for (let i = -height; i < width; i += spacing) {
+        hCtx.beginPath();
+        hCtx.moveTo(i, 0);
+        hCtx.lineTo(i + height, height);
+        hCtx.stroke();
+    }
+}
+
+/* ---------------- SATIN ---------------- */
+else if (type === 'satin') {
+    hCtx.lineWidth = scale * 0.4;
+    for (let y = 0; y < height; y += scale * 3) {
+        hCtx.beginPath();
+        hCtx.moveTo(0, y);
+        hCtx.bezierCurveTo(
+            width * 0.3, y + scale,
+            width * 0.6, y - scale,
+            width, y
+        );
+        hCtx.stroke();
+    }
+}
+
+/* ---------------- KNIT ---------------- */
+else if (type === 'knit') {
+    const loopW = scale * 2;
+    const loopH = scale * 1.5;
+    hCtx.lineWidth = scale / 3;
+
+    for (let y = 0; y < height; y += loopH) {
+        for (let x = 0; x < width; x += loopW) {
+            const xOffset = (Math.floor(y / loopH) % 2) * (loopW / 2);
             hCtx.beginPath();
-            hCtx.moveTo(offset, 0);
-            hCtx.lineTo(offset + height, height); // 45 degree diagonal
+            hCtx.moveTo(x + xOffset, y);
+            hCtx.quadraticCurveTo(
+                x + xOffset + loopW / 2,
+                y + loopH,
+                x + xOffset + loopW,
+                y
+            );
             hCtx.stroke();
         }
-        // Add fainter varying weave
-        hCtx.strokeStyle = "#A0A0A0";
-        hCtx.lineWidth = scale / 4;
-        for (let x = 0; x <= width; x += spacing * 2) {
-            hCtx.beginPath(); hCtx.moveTo(x, 0); hCtx.lineTo(x, height); hCtx.stroke();
-        }
-    } else if (type === 'knit') {
-        // V-loops for Knit
-        const loopW = scale * 2;
-        const loopH = scale * 1.5;
-        hCtx.lineWidth = scale / 3;
+    }
+}
 
-        for (let y = 0; y < height; y += loopH) {
-            for (let x = 0; x < width; x += loopW) {
-                // Shift every other row
-                const xOffset = (Math.floor(y / loopH) % 2) * (loopW / 2);
-                const cx = x + xOffset;
+/* ---------------- RIB ---------------- */
+else if (type === 'rib') {
+    hCtx.lineWidth = scale;
+    for (let x = 0; x < width; x += scale * 2) {
+        hCtx.beginPath();
+        hCtx.moveTo(x, 0);
+        hCtx.lineTo(x, height);
+        hCtx.stroke();
+    }
+}
 
-                hCtx.beginPath();
-                // approximate a "V" or loop
-                hCtx.moveTo(cx, y);
-                hCtx.quadraticCurveTo(cx + loopW / 2, y + loopH, cx + loopW, y); // Down curve
-                hCtx.stroke();
-            }
+/* ---------------- PIQUE ---------------- */
+else if (type === 'pique') {
+    const spacing = scale * 2;
+    hCtx.lineWidth = scale / 2;
+
+    for (let y = 0; y < height; y += spacing) {
+        for (let x = 0; x < width; x += spacing) {
+            hCtx.beginPath();
+            hCtx.moveTo(x, y + spacing / 2);
+            hCtx.lineTo(x + spacing / 2, y);
+            hCtx.lineTo(x + spacing, y + spacing / 2);
+            hCtx.lineTo(x + spacing / 2, y + spacing);
+            hCtx.closePath();
+            hCtx.stroke();
         }
     }
+}
+
+/* ---------------- FLEECE ---------------- */
+else if (type === 'fleece') {
+    for (let i = 0; i < width * height * 0.03; i++) {
+        const x = Math.random() * width;
+        const y = Math.random() * height;
+        const r = Math.random() * scale;
+        hCtx.beginPath();
+        hCtx.arc(x, y, r, 0, Math.PI * 2);
+        hCtx.fillStyle = "#9a9a9a";
+        hCtx.fill();
+    }
+}
+
+/* ---------------- TERRY ---------------- */
+else if (type === 'terry') {
+    for (let y = 0; y < height; y += scale * 1.5) {
+        for (let x = 0; x < width; x += scale * 1.5) {
+            hCtx.beginPath();
+            hCtx.arc(x, y, scale / 2, 0, Math.PI * 2);
+            hCtx.fillStyle = "#b5b5b5";
+            hCtx.fill();
+        }
+    }
+}
+
+/* ---------------- CORDUROY ---------------- */
+else if (type === 'corduroy') {
+    hCtx.lineWidth = scale * 1.5;
+    for (let x = 0; x < width; x += scale * 2.5) {
+        hCtx.beginPath();
+        hCtx.moveTo(x, 0);
+        hCtx.lineTo(x, height);
+        hCtx.stroke();
+    }
+}
+
+/* ---------------- VELVET ---------------- */
+else if (type === 'velvet') {
+    for (let i = 0; i < width * height * 0.015; i++) {
+        const x = Math.random() * width;
+        const y = Math.random() * height;
+        hCtx.fillStyle = "#8a8a8a";
+        hCtx.fillRect(x, y, 1, 1);
+    }
+}
+
 
     // Now convert height map to normal map logic (simplified pixel processing)
     const imgData = hCtx.getImageData(0, 0, width, height);

@@ -1,16 +1,46 @@
 import React, { useCallback, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, OrbitControls, Center, ContactShadows, Html, useProgress } from "@react-three/drei";
-import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save, Trash, Minus, Plus, Maximize } from "lucide-react";
+import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save, Trash, Minus, Plus, Maximize, Settings, Layers, Wand2, Check, Droplet } from "lucide-react";
 import * as THREE from "three";
 import { useStore } from "../../store/useStore";
 
 import DynamicModel from "./DynamicModel";
 import PatternZone from "./PatternZone";
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter";
 import api from "../../api/axios";
-import { processWireframeToSolid } from "../utils/maskProcessor";
 
 
+
+const PRESET_COLORS = [
+    "#000000", "#FFFFFF", "#EF4444", "#F59E0B", "#10B981", "#3B82F6", "#6366F1", "#8B5CF6", "#EC4899", "#8B5CF6"
+];
+
+const FONTS = [
+    { name: "Inter", family: "Inter" },
+    { name: "Roboto", family: "Roboto" },
+    { name: "Lato", family: "Lato" },
+    { name: "Montserrat", family: "Montserrat" },
+    { name: "Poppins", family: "Poppins" },
+    { name: "Open Sans", family: "Open Sans" },
+    { name: "Oswald", family: "Oswald" },
+    { name: "Playfair", family: "Playfair Display" },
+    { name: "Merriweather", family: "Merriweather" },
+    { name: "Lora", family: "Lora" },
+    { name: "Cinzel", family: "Cinzel" },
+    { name: "Bebas Neue", family: "Bebas Neue" },
+    { name: "Anton", family: "Anton" },
+    { name: "Righteous", family: "Righteous" },
+    { name: "Lobster", family: "Lobster" },
+    { name: "Pacifico", family: "Pacifico" },
+    { name: "Dancing Script", family: "Dancing Script" },
+    { name: "Satisfaction", family: "Satisfy" },
+    { name: "Caveat", family: "Caveat" },
+    { name: "Indie Flower", family: "Indie Flower" },
+    { name: "Sacramento", family: "Sacramento" },
+    { name: "Permanent Marker", family: "Permanent Marker" },
+    { name: "Inconsolata", family: "Inconsolata" },
+];
 
 // Helper Button
 const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, icon: Icon }) => {
@@ -66,11 +96,77 @@ const DebouncedColorPicker = ({ value, onChange, className }) => {
 };
 
 const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory } = useStore();
+    const [activeTab, setActiveTab] = useState('design'); // 'design', 'uploads', 'studio'
     const [selectedMesh, setSelectedMesh] = useState(null);
     const [meshColors, setMeshColors] = useState({});
+
+    // Text Tool State
+    const [textInput, setTextInput] = useState("hello");
+    const [selectedFont, setSelectedFont] = useState(FONTS[0].family);
+    const [textColor, setTextColor] = useState("#000000");
+    const [opacity, setOpacity] = useState(1);
+    const [activeTextToPlace, setActiveTextToPlace] = useState(null);
+    const [editingSelection, setEditingSelection] = useState(null); // { meshName, id, type, text, fontFamily, fill, opacity }
+    const [stickerUpdate, setStickerUpdate] = useState(null); // { meshName, id, changes: {} }
+
     const [meshNormals, setMeshNormals] = useState({}); // New state for baked normals
     const [meshList, setMeshList] = useState([]); // Missing state for mesh list
+
+    const handlePatternSelect = (item) => {
+        if (!item) {
+            setEditingSelection(null);
+            return;
+        }
+
+        // If selecting a text item, open text drawer and populate
+        if (item.type === 'text') {
+            setActiveTab('design');
+            setTextInput(item.text);
+            setSelectedFont(item.fontFamily);
+            setTextColor(item.fill);
+            setOpacity(item.opacity ?? 1);
+            setEditingSelection(item);
+            setActiveTextToPlace(null);
+        } else if (item.type === 'image') {
+            setActiveTab('design');
+            setEditingSelection(item);
+            setOpacity(item.opacity ?? 1);
+        }
+    };
+
+    const updateEditingItem = (key, value) => {
+        if (!editingSelection) return;
+
+        const changes = { [key]: value };
+        if (key === 'color') changes.fill = value;
+
+        setStickerUpdate({
+            meshName: editingSelection.meshName,
+            id: editingSelection.id,
+            changes
+        });
+        setEditingSelection(prev => ({ ...prev, ...changes }));
+    };
+
+    const handleDeleteLayer = () => {
+        if (!editingSelection) return;
+        // Optimization: We could pass a "delete" command via stickerUpdate, 
+        // but currently PatternZone manages deletion internally via UI.
+        // For now, let's implement a specific delete signal or just use the update mechanism with a flag?
+        // Actually PatternZone doesn't listen for delete. 
+        // Simpler: Just setStickerUpdate with a "deleted: true" flag if we handle it there, 
+        // OR, better, we need a way to tell pattern zone to delete.
+        // Let's defer exact delete logic or assume PatternZone can handle a special update?
+        // No, let's just use the trash button on the Canvas for now, or implement a clean delete signal.
+        // For this task, I'll add a 'delete' signal to changes.
+        setStickerUpdate({
+            meshName: editingSelection.meshName,
+            id: editingSelection.id,
+            changes: { _deleted: true } // Need to handle this in PatternZone
+        });
+        setEditingSelection(null);
+    };
 
     // Auto-select first mesh
     React.useEffect(() => {
@@ -81,74 +177,43 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
     }, [meshConfig, selectedMesh]);
 
     // Store
-    const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory } = useStore();
-    const [isSaving, setIsSaving] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
     const [hdrUrl] = useState(`/hdr/studio_soft.hdr?v=${Date.now()}`);
+    const modelRef = React.useRef();
 
-    const handleSaveProduct = async () => {
-        setIsSaving(true);
+    const handleDownload = async () => {
+        if (!modelRef.current) return;
+        setIsExporting(true);
+
         try {
-            const formData = new FormData();
-
-            // Product Details
-            formData.append('product_details[name]', productName || 'Untitled Product');
-            formData.append('product_details[subcategory]', subcategory);
-
-            // 1. Fetch GLB Blob
-            const glbRes = await fetch(glbUrl);
-            const glbBlob = await glbRes.blob();
-            formData.append('product_details[glb]', glbBlob, 'model.glb');
-
-            // 2. Process Masks
-            // Iterate over active masks and map them to indexed svgdetails
-            let maskIndex = 0;
-            const processingPromises = Object.entries(meshConfig)
-                .filter(([_, cfg]) => cfg.maskUrl)
-                .map(async ([meshName, cfg]) => {
-                    try {
-                        const currentIndex = maskIndex++; // Capture current index and increment
-
-                        // Mesh Name
-                        formData.append(`svgdetails[${currentIndex}][mesh_name]`, meshName);
-
-                        // Processed White Mask
-                        const solidDataUrl = await processWireframeToSolid(cfg.maskUrl);
-                        const res = await fetch(solidDataUrl);
-                        const blob = await res.blob();
-                        formData.append(`svgdetails[${currentIndex}][white]`, blob, `${meshName}_white.png`);
-
-                        // Original Wireframe
-                        const origRes = await fetch(cfg.maskUrl);
-                        const origBlob = await origRes.blob();
-                        formData.append(`svgdetails[${currentIndex}][original]`, origBlob, `${meshName}_original.svg`);
-
-                    } catch (err) {
-                        console.error(`Failed to process mask for ${meshName}`, err);
-                    }
-                });
-
-            await Promise.all(processingPromises);
-
-            // 3. Send API Request
-            if (productId) {
-                // UPDATE Mode
-                await api.put(`/product/update/${productId}`, formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' }
-                });
-                alert('Product Updated Successfully!');
-            } else {
-                // CREATE Mode
-                await api.post('/product/create', formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' }
-                });
-                alert('Product Saved Successfully!');
-            }
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                modelRef.current.scene,
+                (gltf) => {
+                    const blob = new Blob([gltf], { type: 'model/gltf-binary' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.style.display = 'none';
+                    link.href = url;
+                    link.download = `${productName || 'design'}.glb`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                    setIsExporting(false);
+                },
+                (error) => {
+                    console.error('An error happened during parsing', error);
+                    setIsExporting(false);
+                },
+                {
+                    binary: true,  // Export as GLB
+                }
+            );
 
         } catch (error) {
-            console.error("Save failed", error);
-            alert("Failed to save product. Check console.");
-        } finally {
-            setIsSaving(false);
+            console.error("Export failed", error);
+            setIsExporting(false);
         }
     };
 
@@ -166,192 +231,307 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
     return (
         <div className="flex w-full h-full relative bg-[#f8f9fc] overflow-hidden">
 
-            {/* LEFT SIDEBAR: STRIP ONLY */}
-            <div className="w-20 bg-white border-r border-zinc-200 flex flex-col items-center py-6 z-50 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-indigo-200 mb-8">
-                    P
+            {/* MAIN SIDEBAR PANEL (Replaces Strip + Drawer) */}
+            <div className="w-[380px] bg-[#f8f9fc] border-r border-zinc-200 flex flex-col z-40 h-full shadow-xl">
+                {/* TABS HEADER */}
+                <div className="flex items-center p-2 gap-1 bg-white border-b border-zinc-100 mx-4 mt-4 rounded-xl shadow-sm">
+                    {['design', 'uploads'].map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${activeTab === tab ? 'bg-white text-indigo-600 shadow-md ring-1 ring-zinc-100' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50'}`}
+                        >
+                            {tab === 'design' && <Layers size={14} />}
+                            {tab === 'uploads' && <ImageIcon size={14} />}
+                            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        </button>
+                    ))}
                 </div>
 
-                <div className="flex flex-col gap-6 w-full px-2">
-                    <TooltipButton icon={ImageIcon} label="Assets" onClick={() => setSidebarOpen(prev => !prev)} isActive={sidebarOpen} />
-                    <TooltipButton icon={Type} label="Text" />
-                    <TooltipButton icon={Palette} label="Color" />
-                </div>
+                {/* SCROLLABLE CONTENT */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-6">
 
-                <div className="mt-auto">
-                    {/* ... Back button ... */}
-                </div>
-            </div>
-
-            {/* FLOATING DRAWER */}
-            <div className={`w-80 bg-white/90 backdrop-blur-3xl border-r border-zinc-200/50 flex flex-col z-40 absolute left-20 top-0 bottom-0 shadow-2xl transition-transform duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1.0)] ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-                <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-                    <div>
-                        <h2 className="text-xl font-bold text-zinc-900 mb-1">Assets Library</h2>
-                        <p className="text-xs text-zinc-400">Manage your visuals & materials</p>
-                    </div>
-                    <button onClick={() => setSidebarOpen(false)} className="text-zinc-400 hover:text-zinc-600"><X size={20} /></button>
-                </div>
-
-                <div className="p-6 flex-1 overflow-y-auto space-y-8">
-                    {/* Existing Assets Content */}
-                    <div className="space-y-4">
-                        <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Uploads</label>
-                        <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-zinc-200 rounded-2xl hover:border-indigo-400 hover:bg-indigo-50/50 transition-all cursor-pointer group bg-zinc-50/50">
-                            <Upload size={24} className="text-zinc-300 group-hover:text-indigo-500 mb-2 transition-colors" />
-                            <span className="text-xs font-bold text-zinc-500 group-hover:text-indigo-600">Upload Image</span>
-                            <input type="file" accept="image/*" onChange={(e) => { if (e.target.files[0]) setActiveStickerUrl(URL.createObjectURL(e.target.files[0])); }} className="hidden" />
-                        </label>
-                    </div>
-
-                    {/* Active Sticker Control */}
-                    {activeStickerUrl && (
-                        <div className="bg-white border border-zinc-200 rounded-xl p-3 shadow-sm flex items-center justify-between animate-in fade-in slide-in-from-top-2">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-zinc-100 border border-zinc-200 overflow-hidden shrink-0">
-                                    <img src={activeStickerUrl} alt="Active" className="w-full h-full object-contain" />
+                    {/* --- DESIGN TAB --- */}
+                    {activeTab === 'design' && (
+                        <>
+                            {/* TEXT LAYER SECTION */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Text Layer</h3>
                                 </div>
-                                <div>
-                                    <p className="text-xs font-bold text-zinc-700">Active Sticker</p>
-                                    <p className="text-[10px] text-zinc-400">Ready to place</p>
+                                <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                        <input
+                                            type="text"
+                                            value={textInput}
+                                            onChange={(e) => {
+                                                setTextInput(e.target.value);
+                                                if (editingSelection) updateEditingItem('text', e.target.value);
+                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, text: e.target.value }));
+                                            }}
+                                            className="w-full bg-zinc-50 border border-zinc-200 text-zinc-800 text-sm font-medium rounded-xl px-4 py-3 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                                            placeholder="Add text..."
+                                        />
+                                        <div className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-green-100 text-green-600 rounded-lg">
+                                            <Check size={16} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        onClick={() => {
+                                            // Ensure placement mode if not editing
+                                            if (!editingSelection) {
+                                                setActiveTextToPlace({ text: textInput, fontFamily: selectedFont, color: textColor, opacity });
+                                            } else {
+                                                // If editing, maybe "Add New"?
+                                                setEditingSelection(null);
+                                                setActiveTextToPlace({ text: "New Text", fontFamily: selectedFont, color: textColor, opacity });
+                                                setTextInput("New Text");
+                                            }
+                                        }}
+                                        className="bg-[#3B82F6] hover:bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+                                    >
+                                        <Plus size={16} /> Add Text
+                                    </button>
+                                    <button className="bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all">
+                                        <Wand2 size={16} className="text-purple-500" /> AI Gen
+                                    </button>
                                 </div>
                             </div>
-                            <button
-                                onClick={() => setActiveStickerUrl(null)}
-                                className="w-8 h-8 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 flex items-center justify-center transition-colors"
-                                title="Remove Sticker"
-                            >
-                                <Trash size={16} />
-                            </button>
-                        </div>
-                    )}
 
-                    {/* Selected Part Color Control */}
-                    {selectedMesh && (
-                        <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
-                            <label className="text-xs font-bold text-indigo-500 uppercase tracking-widest block">
-                                Selected: {selectedMesh}
-                            </label>
-                            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 shadow-sm space-y-3">
+                            {/* TYPOGRAPHY SECTION */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm font-bold text-indigo-900">Pattern Color</span>
-                                    <div className="flex gap-2 items-center">
-                                        <DebouncedColorPicker
-                                            value={meshColors[selectedMesh] || globalMaterial.color || "#ffffff"}
-                                            onChange={(val) => setMeshColors(prev => ({ ...prev, [selectedMesh]: val }))}
-                                            className="w-8 h-8 rounded-full border border-indigo-200 cursor-pointer overflow-hidden p-0 shadow-sm"
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                        <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Typography</h3>
+                                    </div>
+                                    <button className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-md hover:bg-blue-100">View all</button>
+                                </div>
+
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {FONTS.map(font => (
+                                        <button
+                                            key={font.family}
+                                            onClick={() => {
+                                                setSelectedFont(font.family);
+                                                if (editingSelection) updateEditingItem('fontFamily', font.family);
+                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, fontFamily: font.family }));
+                                            }}
+                                            className={`w-full text-left px-4 py-3 rounded-xl transition-all flex items-center justify-between ${selectedFont === font.family ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50'}`}
+                                        >
+                                            <span style={{ fontFamily: font.family }} className="text-sm">{font.name}</span>
+                                            {selectedFont === font.family && <div className="w-4 h-4 rounded-full bg-blue-500 text-white flex items-center justify-center"><Check size={10} /></div>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* COLOR CONTENT */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
+                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Color</h3>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    {PRESET_COLORS.map(c => (
+                                        <button
+                                            key={c}
+                                            onClick={() => {
+                                                setTextColor(c);
+                                                if (editingSelection) updateEditingItem('color', c);
+                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, color: c }));
+                                            }}
+                                            className={`w-10 h-10 rounded-full border-2 transition-all ${textColor === c ? 'border-blue-500 scale-110' : 'border-zinc-100 hover:border-zinc-300'}`}
+                                            style={{ backgroundColor: c }}
                                         />
+                                    ))}
+                                    <label className="w-10 h-10 rounded-full border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 hover:text-blue-500 hover:border-blue-400 cursor-pointer transition-all">
+                                        <Plus size={18} />
+                                        <input type="color" className="hidden"
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setTextColor(val);
+                                                if (editingSelection) updateEditingItem('color', val);
+                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, color: val }));
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className="flex items-center gap-3 bg-zinc-50 border border-zinc-200 p-2 rounded-xl">
+                                    <div className="w-10 h-10 rounded-lg border border-zinc-200" style={{ backgroundColor: textColor }}></div>
+                                    <span className="text-xs font-mono text-zinc-500 uppercase flex-1">{textColor}</span>
+                                    <div className="text-zinc-400"><Droplet size={16} /></div>
+                                </div>
+                            </div>
+
+                            {/* MATERIAL / FABRIC SECTION */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Fabric & Material</h3>
+                                </div>
+
+                                <div className="space-y-4">
+                                    {/* Type */}
+                                    <div className="space-y-1">
+                                        <label className="text-xs text-zinc-400 font-semibold">Pattern Weave</label>
+                                        <select
+                                            value={materialSettings.fabricType || 'plain'}
+                                            onChange={(e) => setMaterialSetting("fabricType", e.target.value)}
+                                            className="w-full text-xs p-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-700 outline-none focus:border-indigo-500 focus:bg-white transition-all font-medium"
+                                        >
+                                            <option value="plain">Plain Weave (Standard)</option>
+                                            <option value="twill">Twill (Denim)</option>
+                                            <option value="satin">Satin</option>
+                                            <option value="knit">Knit (Jersey)</option>
+                                            <option value="rib">Rib Knit</option>
+                                            <option value="pique">Piqué</option>
+                                            <option value="fleece">Fleece</option>
+                                            <option value="velvet">Velvet</option>
+                                            <option value="corduroy">Corduroy</option>
+                                        </select>
+                                    </div>
+
+                                    {/* Strength */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs text-zinc-500 font-medium">
+                                            <span>Texture Depth</span>
+                                            <span>{materialSettings.fabricStrength}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="2"
+                                            step="0.1"
+                                            value={materialSettings.fabricStrength || 0}
+                                            onChange={(e) => setMaterialSetting("fabricStrength", Number(e.target.value))}
+                                            className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
+                                        />
+                                    </div>
+
+                                    {/* Basic Material Props (Optional but good for completeness) */}
+                                    <div className="grid grid-cols-2 gap-4 pt-2">
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Roughness</span>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={materialSettings.roughness}
+                                                onChange={(e) => setMaterialSetting("roughness", Number(e.target.value))}
+                                                className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-purple-500"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Sheen</span>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={materialSettings.sheen}
+                                                onChange={(e) => setMaterialSetting("sheen", Number(e.target.value))}
+                                                className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-purple-500"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+
+                            {/* ADJUSTMENTS (Opacity) */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Adjustments</h3>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-zinc-700">Opacity</span>
+                                        <span className="bg-zinc-100 text-zinc-600 px-2 py-1 rounded-md">{(opacity * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.01"
+                                        value={opacity}
+                                        onChange={(e) => {
+                                            const val = Number(e.target.value);
+                                            setOpacity(val);
+                                            if (editingSelection) updateEditingItem('opacity', val);
+                                            if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, opacity: val }));
+                                        }}
+                                        className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none accent-blue-500"
+                                    />
+
+                                    {/* Texture Integration Toggle */}
+                                    <div className="flex items-center justify-between pt-2 border-t border-zinc-50 mt-2">
+                                        <span className="text-xs font-semibold text-zinc-700">Apply Fabric Texture</span>
+                                        <button
+                                            onClick={() => {
+                                                if (editingSelection) updateEditingItem('isFlat', !editingSelection.isFlat);
+                                                // Note: We don't track isFlat for new text globally here yet, defaults to false
+                                            }}
+                                            className={`w-10 h-5 rounded-full flex items-center transition-colors px-1 ${editingSelection?.isFlat ? 'bg-zinc-200' : 'bg-green-500'}`}
+                                            title={editingSelection?.isFlat ? "Flat (No Texture)" : "Textured (Fabric Bumps)"}
+                                        >
+                                            <div className={`w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform ${editingSelection?.isFlat ? 'translate-x-0' : 'translate-x-5'}`} />
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-400 leading-tight">
+                                        {editingSelection?.isFlat ? "Sticker renders flat on top of fabric." : "Sticker blends with fabric texture depth."}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* REMOVE LAYER */}
+                            {editingSelection && (
+                                <button
+                                    onClick={handleDeleteLayer}
+                                    className="w-full py-3.5 border border-red-100 text-red-500 hover:bg-red-50 font-semibold rounded-2xl flex items-center justify-center gap-2 transition-all mt-4"
+                                >
+                                    <Trash size={16} /> Remove Layer
+                                </button>
+                            )}
+                        </>
+                    )}
+
+                    {/* --- UPLOADS TAB --- */}
+                    {activeTab === 'uploads' && (
+                        <div className="space-y-4">
+                            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Uploads</label>
+                            <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-zinc-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all cursor-pointer group bg-zinc-50/50">
+                                <Upload size={24} className="text-zinc-300 group-hover:text-blue-500 mb-2 transition-colors" />
+                                <span className="text-xs font-bold text-zinc-500 group-hover:text-blue-600">Upload Image</span>
+                                <input type="file" accept="image/*" onChange={(e) => { if (e.target.files[0]) setActiveStickerUrl(URL.createObjectURL(e.target.files[0])); }} className="hidden" />
+                            </label>
+
+                            {activeStickerUrl && (
+                                <div className="bg-white border border-zinc-200 rounded-xl p-3 shadow-sm flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-zinc-100 border border-zinc-200 overflow-hidden shrink-0">
+                                            <img src={activeStickerUrl} alt="Active" className="w-full h-full object-contain" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-zinc-700">Active Sticker</p>
+                                            <p className="text-[10px] text-zinc-400">Ready to place</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setActiveStickerUrl(null)} className="text-red-500 bg-red-50 p-2 rounded-lg"><Trash size={14} /></button>
+                                </div>
+                            )}
                         </div>
                     )}
 
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Studio Settings (Admin)</label>
-                            <button onClick={saveMaterialConfiguration} className="text-indigo-600 hover:text-indigo-800 transition-colors" title="Save Preset">
-                                <Save size={14} />
-                            </button>
-                        </div>
-                        {/* ... Material Sliders ... */}
-                        <div className="bg-white border border-zinc-200 rounded-xl p-4 shadow-sm space-y-5">
-                            {/* Roughness */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-xs text-zinc-400">
-                                    <span>Roughness</span>
-                                    <span>{materialSettings.roughness}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.01"
-                                    value={materialSettings.roughness}
-                                    onChange={(e) => setMaterialSetting("roughness", Number(e.target.value))}
-                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
-                                />
-                            </div>
-                            {/* Sheen */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-xs text-zinc-400">
-                                    <span>Sheen (Velvet)</span>
-                                    <span>{materialSettings.sheen}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.01"
-                                    value={materialSettings.sheen}
-                                    onChange={(e) => setMaterialSetting("sheen", Number(e.target.value))}
-                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
-                                />
-                            </div>
-                            {/* Sheen Roughness */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-xs text-zinc-400">
-                                    <span>Sheen Spread</span>
-                                    <span>{materialSettings.sheenRoughness}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.01"
-                                    value={materialSettings.sheenRoughness}
-                                    onChange={(e) => setMaterialSetting("sheenRoughness", Number(e.target.value))}
-                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
-                                />
-                            </div>
-                            {/* Metalness */}
-                            <div className="space-y-1 pt-4 border-t border-zinc-100">
-                                <div className="flex justify-between text-xs text-zinc-400">
-                                    <span>Metalness</span>
-                                    <span>{materialSettings.metalness}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.01"
-                                    value={materialSettings.metalness}
-                                    onChange={(e) => setMaterialSetting("metalness", Number(e.target.value))}
-                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
-                                />
-                            </div>
-                        </div>
-                        {/* Fabric Texture */}
-                        <div className="space-y-3 pt-4 border-t border-zinc-100">
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-xs text-zinc-400">
-                                    <span>Fabric Texture</span>
-                                    <span>{materialSettings.fabricStrength}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="2"
-                                    step="0.1"
-                                    value={materialSettings.fabricStrength || 0}
-                                    onChange={(e) => setMaterialSetting("fabricStrength", Number(e.target.value))}
-                                    className="w-full h-1 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-xs text-zinc-400">Pattern Type</label>
-                                <select
-                                    value={materialSettings.fabricType || 'plain'}
-                                    onChange={(e) => setMaterialSetting("fabricType", e.target.value)}
-                                    className="w-full text-xs p-2 rounded-lg border border-zinc-200 bg-white text-zinc-700 outline-none focus:border-indigo-500"
-                                >
-                                    <option value="plain">Plain Weave</option>
-                                    <option value="twill">Twill (Denim)</option>
-                                    <option value="knit">Knit</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
+
+
                 </div>
             </div>
 
@@ -376,13 +556,17 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                                     meshName={meshName}
                                     maskUrl={cfg.maskUrl}
                                     stickerUrl={activeStickerUrl}
+                                    textToPlace={activeTextToPlace}
                                     onUpdateTexture={onUpdateTexture}
                                     onUpdateNormal={applyNormal} // New prop
+                                    onSelect={handlePatternSelect}
+                                    externalUpdate={stickerUpdate}
                                     fabricType={materialSettings.fabricType} // Pass type
                                     bgColor={meshColors[meshName] || globalMaterial.color || "#ffffff"}
                                     isSelected={isSelected}
                                     onClick={() => setSelectedMesh(meshName)}
                                     onPlaceSticker={() => setActiveStickerUrl(null)}
+                                    onPlaceText={() => setActiveTextToPlace(null)}
                                 />
                             );
                         })}
@@ -434,6 +618,7 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                             <React.Suspense fallback={<Loader />}>
                                 <Center position={[0, -0.2, 0]}>
                                     <DynamicModel
+                                        ref={modelRef}
                                         url={glbUrl}
                                         meshTextures={meshTextures}
                                         meshNormals={meshNormals} // Pass normals
@@ -466,19 +651,19 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                     <div className="p-6 bg-white border-t border-zinc-100 flex flex-col gap-3">
                         <div className="flex gap-4">
                             <Button
-                                onClick={handleSaveProduct}
-                                disabled={isSaving}
+                                onClick={handleDownload}
+                                disabled={isExporting}
                                 variant="primary"
-                                icon={isSaving ? undefined : Save}
+                                icon={isExporting ? undefined : Download}
                                 className="w-full py-4 shadow-xl shadow-indigo-500/20"
                             >
-                                {isSaving ? "Saving..." : "Save Product"}
+                                {isExporting ? "Exporting..." : "Download GLB"}
                             </Button>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 
