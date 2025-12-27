@@ -4,7 +4,7 @@ import { useStore } from "../../store/useStore";
 import * as THREE from "three";
 import { generateFabricNormalMap } from "../utils/textureUtils";
 
-const DynamicModel = React.memo(React.forwardRef(({ url, meshTextures, meshNormals, materialProps, setMeshList, onMeshLoaded }, ref) => {
+const DynamicModel = React.memo(React.forwardRef(({ url, meshTextures, meshNormals, meshColors, materialProps, setMeshList, onMeshLoaded }, ref) => {
     const { scene } = useGLTF(url);
     const clonedScene = useMemo(() => scene.clone(), [scene]);
 
@@ -137,12 +137,27 @@ const DynamicModel = React.memo(React.forwardRef(({ url, meshTextures, meshNorma
                 mat.flatShading = false;
                 mat.clearcoat = 0; // Keeping clearcoat off for now as requested
 
-                if (materialProps.color) mat.color.set(materialProps.color);
+                // CRITICAL FIX: Only apply mesh/material colors when NO texture is present
+                // When a texture exists, the material color multiplies with it.
+                // We must use white (#ffffff) to preserve the texture's original colors.
+                if (meshTextures[child.name]) {
+                    // Texture is present - use white to avoid color multiplication
+                    mat.color.set('#ffffff');
+                } else if (meshColors && meshColors[child.name]) {
+                    // No texture - apply mesh-specific color
+                    mat.color.set(meshColors[child.name]);
+                } else if (materialProps.color) {
+                    // No texture - apply global material color
+                    mat.color.set(materialProps.color);
+                } else {
+                    // Fallback to white
+                    mat.color.set('#ffffff');
+                }
 
                 mat.needsUpdate = true;
             }
         });
-    }, [clonedScene, meshTextures, materialProps, materialSettings, fabricTexture]);
+    }, [clonedScene, meshTextures, meshNormals, meshColors, materialProps, materialSettings, fabricTexture]);
 
     return (
         <Center>

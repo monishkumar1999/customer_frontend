@@ -1,8 +1,10 @@
-import React, { useCallback, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import React, { useCallback, useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Environment, OrbitControls, Center, ContactShadows, Html, useProgress } from "@react-three/drei";
-import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save, Trash, Minus, Plus, Maximize, Settings, Layers, Wand2, Check, Droplet } from "lucide-react";
+import { Type, Palette, Upload, Download, Image as ImageIcon, ChevronLeft, X, Save, Trash, Minus, Plus, Maximize, Settings, Layers, Wand2, Check, Droplet, Sun, Moon, Sunset, Scan, Lightbulb, Cloud, Trees, Building2, Menu, Eye, EyeOff, RotateCcw, RotateCw } from "lucide-react";
 import * as THREE from "three";
+import AttractiveColorPicker from "../../components/ui/AttractiveColorPicker";
 import { useStore } from "../../store/useStore";
 
 import DynamicModel from "./DynamicModel";
@@ -57,6 +59,20 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
     );
 };
 
+// Background Texture Helper
+const BackgroundTexture = ({ url }) => {
+    const { scene } = useThree();
+    React.useEffect(() => {
+        const loader = new THREE.TextureLoader();
+        loader.load(url, (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            scene.background = texture;
+        });
+        return () => { scene.background = null; };
+    }, [url, scene]);
+    return null;
+};
+
 // Simple Loading Screen
 const Loader = () => {
     const { progress } = useProgress();
@@ -71,35 +87,27 @@ const Loader = () => {
 };
 
 const DebouncedColorPicker = ({ value, onChange, className }) => {
-    const [localColor, setLocalColor] = useState(value);
-
-    React.useEffect(() => {
-        setLocalColor(value);
-    }, [value]);
-
-    const handleChange = (e) => {
-        const newVal = e.target.value;
-        setLocalColor(newVal);
-        // Debounce update to parent
-        const timeoutId = setTimeout(() => onChange(newVal), 200);
-        return () => clearTimeout(timeoutId);
-    };
-
     return (
-        <input
-            type="color"
-            value={localColor}
-            onChange={handleChange}
-            className={className}
-        />
+        <div className={`relative ${className}`}>
+            <AttractiveColorPicker
+                color={value}
+                onChange={onChange}
+                className="w-full"
+            />
+        </div>
     );
 };
 
 const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
-    const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory } = useStore();
+    const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory, meshColors, setMeshColor } = useStore();
+    const { undo, redo, clear } = useStore.temporal.getState();
+
     const [activeTab, setActiveTab] = useState('design'); // 'design', 'uploads', 'studio'
     const [selectedMesh, setSelectedMesh] = useState(null);
-    const [meshColors, setMeshColors] = useState({});
+
+    // Responsive UI State
+    const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [previewOpen, setPreviewOpen] = useState(true);
 
     // Text Tool State
     const [textInput, setTextInput] = useState("hello");
@@ -108,10 +116,44 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
     const [opacity, setOpacity] = useState(1);
     const [activeTextToPlace, setActiveTextToPlace] = useState(null);
     const [editingSelection, setEditingSelection] = useState(null); // { meshName, id, type, text, fontFamily, fill, opacity }
-    const [stickerUpdate, setStickerUpdate] = useState(null); // { meshName, id, changes: {} }
+    const { meshStickers, setMeshStickers } = useStore();
 
     const [meshNormals, setMeshNormals] = useState({}); // New state for baked normals
     const [meshList, setMeshList] = useState([]); // Missing state for mesh list
+
+    // Environment & Background State
+    const [envPreset, setEnvPreset] = useState('studio');
+    const [bgType, setBgType] = useState('solid'); // 'solid' | 'image'
+    const [bgColor, setBgColor] = useState('#F1F5F9');
+    const [bgImage, setBgImage] = useState(null);
+    // showBackground is replaced by bgType logic (solid/image vs transparent handled by removing both?)
+    // Actually, user might want "Transparent" which means NO background.
+    // Let's keep a "transparent" mode or just "solid" with null?
+    // User requested "Light", "Dark", "Custom", "Image". 
+    // Transparent is useful for export, let's keep it as a 'transparent' type.
+
+    const [showBgPicker, setShowBgPicker] = useState(false);
+    const customBgBtnRef = useRef(null);
+    const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
+
+    useEffect(() => {
+        if (showBgPicker && customBgBtnRef.current) {
+            const rect = customBgBtnRef.current.getBoundingClientRect();
+            // Position it above the button, aligned to the left
+            setPickerPos({
+                top: rect.top - 8, // 8px margin
+                left: rect.left
+            });
+        }
+    }, [showBgPicker]);
+
+    // Derived: showBackground was boolean. Now we check type.
+    const showBackground = bgType !== 'transparent';
+    const [brightness, setBrightness] = useState(1);
+    const [showAuxLights, setShowAuxLights] = useState(true);
+
+    // Refs
+    const bgImageFileInputRef = React.useRef(null);
 
     const handlePatternSelect = (item) => {
         if (!item) {
@@ -141,30 +183,23 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
         const changes = { [key]: value };
         if (key === 'color') changes.fill = value;
 
-        setStickerUpdate({
-            meshName: editingSelection.meshName,
-            id: editingSelection.id,
-            changes
-        });
+        const { meshName, id } = editingSelection;
+        const currentStickers = meshStickers[meshName] || [];
+        const nextStickers = currentStickers.map(s => s.id === id ? { ...s, ...changes } : s);
+
+        setMeshStickers(meshName, nextStickers);
         setEditingSelection(prev => ({ ...prev, ...changes }));
+    };
+
+    const updateMeshColor = (meshName, color) => {
+        setMeshColor(meshName, color);
     };
 
     const handleDeleteLayer = () => {
         if (!editingSelection) return;
-        // Optimization: We could pass a "delete" command via stickerUpdate, 
-        // but currently PatternZone manages deletion internally via UI.
-        // For now, let's implement a specific delete signal or just use the update mechanism with a flag?
-        // Actually PatternZone doesn't listen for delete. 
-        // Simpler: Just setStickerUpdate with a "deleted: true" flag if we handle it there, 
-        // OR, better, we need a way to tell pattern zone to delete.
-        // Let's defer exact delete logic or assume PatternZone can handle a special update?
-        // No, let's just use the trash button on the Canvas for now, or implement a clean delete signal.
-        // For this task, I'll add a 'delete' signal to changes.
-        setStickerUpdate({
-            meshName: editingSelection.meshName,
-            id: editingSelection.id,
-            changes: { _deleted: true } // Need to handle this in PatternZone
-        });
+        const { meshName, id } = editingSelection;
+        const currentStickers = meshStickers[meshName] || [];
+        setMeshStickers(meshName, currentStickers.filter(s => s.id !== id));
         setEditingSelection(null);
     };
 
@@ -176,9 +211,24 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
         }
     }, [meshConfig, selectedMesh]);
 
+    // Keyboard Shortcuts for Undo/Redo
+    React.useEffect(() => {
+        const handleKeyDown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                if (e.shiftKey) redo();
+                else undo();
+                e.preventDefault();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                redo();
+                e.preventDefault();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undo, redo]);
+
     // Store
     const [isExporting, setIsExporting] = useState(false);
-    const [hdrUrl] = useState(`/hdr/studio_soft.hdr?v=${Date.now()}`);
     const modelRef = React.useRef();
 
     const handleDownload = async () => {
@@ -230,18 +280,40 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
 
     return (
         <div className="flex w-full h-full relative bg-[#f8f9fc] overflow-hidden">
+            {/* Mobile Menu Toggle */}
+            <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="lg:hidden fixed top-4 left-4 z-50 bg-white p-3 rounded-xl shadow-lg border border-zinc-200"
+            >
+                <Menu size={20} className="text-zinc-700" />
+            </button>
+
+            {/* Mobile 3D Preview Toggle */}
+            <button
+                onClick={() => setPreviewOpen(!previewOpen)}
+                className="lg:hidden fixed top-4 right-4 z-50 bg-white p-3 rounded-xl shadow-lg border border-zinc-200"
+            >
+                {previewOpen ? <EyeOff size={20} className="text-zinc-700" /> : <Eye size={20} className="text-zinc-700" />}
+            </button>
 
             {/* MAIN SIDEBAR PANEL (Replaces Strip + Drawer) */}
-            <div className="w-[380px] bg-[#f8f9fc] border-r border-zinc-200 flex flex-col z-40 h-full shadow-xl">
+            <div className={`
+                w-full sm:w-[300px] 
+                bg-[#f8f9fc] border-r border-zinc-200 
+                flex flex-col z-40 h-full shadow-xl
+                transition-transform duration-300
+                ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+            `}>
                 {/* TABS HEADER */}
                 <div className="flex items-center p-2 gap-1 bg-white border-b border-zinc-100 mx-4 mt-4 rounded-xl shadow-sm">
-                    {['design', 'uploads'].map(tab => (
+                    {['design', 'studio', 'uploads'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
                             className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${activeTab === tab ? 'bg-white text-indigo-600 shadow-md ring-1 ring-zinc-100' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50'}`}
                         >
                             {tab === 'design' && <Layers size={14} />}
+                            {tab === 'studio' && <Settings size={14} />}
                             {tab === 'uploads' && <ImageIcon size={14} />}
                             {tab.charAt(0).toUpperCase() + tab.slice(1)}
                         </button>
@@ -302,73 +374,6 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                                 </div>
                             </div>
 
-                            {/* TYPOGRAPHY SECTION */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                                        <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Typography</h3>
-                                    </div>
-                                    <button className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-md hover:bg-blue-100">View all</button>
-                                </div>
-
-                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                                    {FONTS.map(font => (
-                                        <button
-                                            key={font.family}
-                                            onClick={() => {
-                                                setSelectedFont(font.family);
-                                                if (editingSelection) updateEditingItem('fontFamily', font.family);
-                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, fontFamily: font.family }));
-                                            }}
-                                            className={`w-full text-left px-4 py-3 rounded-xl transition-all flex items-center justify-between ${selectedFont === font.family ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50'}`}
-                                        >
-                                            <span style={{ fontFamily: font.family }} className="text-sm">{font.name}</span>
-                                            {selectedFont === font.family && <div className="w-4 h-4 rounded-full bg-blue-500 text-white flex items-center justify-center"><Check size={10} /></div>}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* COLOR CONTENT */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
-                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Color</h3>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    {PRESET_COLORS.map(c => (
-                                        <button
-                                            key={c}
-                                            onClick={() => {
-                                                setTextColor(c);
-                                                if (editingSelection) updateEditingItem('color', c);
-                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, color: c }));
-                                            }}
-                                            className={`w-10 h-10 rounded-full border-2 transition-all ${textColor === c ? 'border-blue-500 scale-110' : 'border-zinc-100 hover:border-zinc-300'}`}
-                                            style={{ backgroundColor: c }}
-                                        />
-                                    ))}
-                                    <label className="w-10 h-10 rounded-full border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 hover:text-blue-500 hover:border-blue-400 cursor-pointer transition-all">
-                                        <Plus size={18} />
-                                        <input type="color" className="hidden"
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                setTextColor(val);
-                                                if (editingSelection) updateEditingItem('color', val);
-                                                if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, color: val }));
-                                            }}
-                                        />
-                                    </label>
-                                </div>
-
-                                <div className="flex items-center gap-3 bg-zinc-50 border border-zinc-200 p-2 rounded-xl">
-                                    <div className="w-10 h-10 rounded-lg border border-zinc-200" style={{ backgroundColor: textColor }}></div>
-                                    <span className="text-xs font-mono text-zinc-500 uppercase flex-1">{textColor}</span>
-                                    <div className="text-zinc-400"><Droplet size={16} /></div>
-                                </div>
-                            </div>
-
                             {/* MATERIAL / FABRIC SECTION */}
                             <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
                                 <div className="flex items-center gap-2">
@@ -414,6 +419,23 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                                         />
                                     </div>
 
+                                    {/* Scale */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs text-zinc-500 font-medium">
+                                            <span>Texture Scale</span>
+                                            <span>{materialSettings.fabricScale || 8}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="2"
+                                            max="40"
+                                            step="1"
+                                            value={materialSettings.fabricScale || 8}
+                                            onChange={(e) => setMaterialSetting("fabricScale", Number(e.target.value))}
+                                            className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
+                                        />
+                                    </div>
+
                                     {/* Basic Material Props (Optional but good for completeness) */}
                                     <div className="grid grid-cols-2 gap-4 pt-2">
                                         <div className="space-y-2">
@@ -441,53 +463,6 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                                             />
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-
-                            {/* ADJUSTMENTS (Opacity) */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Adjustments</h3>
-                                </div>
-
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-zinc-700">Opacity</span>
-                                        <span className="bg-zinc-100 text-zinc-600 px-2 py-1 rounded-md">{(opacity * 100).toFixed(0)}%</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.01"
-                                        value={opacity}
-                                        onChange={(e) => {
-                                            const val = Number(e.target.value);
-                                            setOpacity(val);
-                                            if (editingSelection) updateEditingItem('opacity', val);
-                                            if (activeTextToPlace) setActiveTextToPlace(prev => ({ ...prev, opacity: val }));
-                                        }}
-                                        className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none accent-blue-500"
-                                    />
-
-                                    {/* Texture Integration Toggle */}
-                                    <div className="flex items-center justify-between pt-2 border-t border-zinc-50 mt-2">
-                                        <span className="text-xs font-semibold text-zinc-700">Apply Fabric Texture</span>
-                                        <button
-                                            onClick={() => {
-                                                if (editingSelection) updateEditingItem('isFlat', !editingSelection.isFlat);
-                                                // Note: We don't track isFlat for new text globally here yet, defaults to false
-                                            }}
-                                            className={`w-10 h-5 rounded-full flex items-center transition-colors px-1 ${editingSelection?.isFlat ? 'bg-zinc-200' : 'bg-green-500'}`}
-                                            title={editingSelection?.isFlat ? "Flat (No Texture)" : "Textured (Fabric Bumps)"}
-                                        >
-                                            <div className={`w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform ${editingSelection?.isFlat ? 'translate-x-0' : 'translate-x-5'}`} />
-                                        </button>
-                                    </div>
-                                    <p className="text-[10px] text-zinc-400 leading-tight">
-                                        {editingSelection?.isFlat ? "Sticker renders flat on top of fabric." : "Sticker blends with fabric texture depth."}
-                                    </p>
                                 </div>
                             </div>
 
@@ -530,24 +505,239 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                         </div>
                     )}
 
+                    {/* --- STUDIO TAB (Lighting & Background) --- */}
+                    {activeTab === 'studio' && (
+                        <div className="space-y-6">
+                            {/* Environment */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Environment & Lighting</h3>
+                                    <button
+                                        onClick={() => setShowAuxLights(!showAuxLights)}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${showAuxLights ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-400'}`}
+                                    >
+                                        <Lightbulb size={12} />
+                                        {showAuxLights ? 'Aux Lights ON' : 'Aux Lights OFF'}
+                                    </button>
+                                </div>
+
+                                {/* Brightness Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs text-zinc-500 font-medium">
+                                        <span>Scene Brightness</span>
+                                        <span>{brightness.toFixed(1)}</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0.2"
+                                        max="3"
+                                        step="0.1"
+                                        value={brightness}
+                                        onChange={(e) => setBrightness(Number(e.target.value))}
+                                        className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none accent-indigo-600"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                    <PresetBtn
+                                        label="Studio"
+                                        icon={Sun}
+                                        active={envPreset === 'studio'}
+                                        onClick={() => setEnvPreset('studio')}
+                                    />
+                                    <PresetBtn
+                                        label="City"
+                                        icon={Building2}
+                                        active={envPreset === 'city'}
+                                        onClick={() => setEnvPreset('city')}
+                                    />
+                                    <PresetBtn
+                                        label="Dawn"
+                                        icon={Cloud}
+                                        active={envPreset === 'dawn'}
+                                        onClick={() => setEnvPreset('dawn')}
+                                    />
+                                    <PresetBtn
+                                        label="Forest"
+                                        icon={Trees}
+                                        active={envPreset === 'forest'}
+                                        onClick={() => setEnvPreset('forest')}
+                                    />
+                                    <PresetBtn
+                                        label="Night"
+                                        icon={Moon}
+                                        active={envPreset === 'warehouse'}
+                                        onClick={() => setEnvPreset('warehouse')}
+                                    />
+                                    <PresetBtn
+                                        label="Sunset"
+                                        icon={Sunset}
+                                        active={envPreset === 'sunset'}
+                                        onClick={() => setEnvPreset('sunset')}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Background */}
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 space-y-4">
+                                <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest">Background</h3>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {/* Light Preset */}
+                                    <button
+                                        onClick={() => { setBgType('solid'); setBgColor('#FFFFFF'); }}
+                                        className={`flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border transition-all ${bgType === 'solid' && bgColor === '#FFFFFF' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'}`}
+                                    >
+                                        <div className="w-4 h-4 rounded-full border border-zinc-200 bg-white" />
+                                        <span className="text-[9px] font-bold uppercase">Light</span>
+                                    </button>
+
+                                    {/* Dark Preset (Ash) */}
+                                    <button
+                                        onClick={() => { setBgType('solid'); setBgColor('#262626'); }}
+                                        className={`flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border transition-all ${bgType === 'solid' && bgColor === '#262626' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'}`}
+                                    >
+                                        <div className="w-4 h-4 rounded-full border border-zinc-200 bg-[#262626]" />
+                                        <span className="text-[9px] font-bold uppercase">Dark</span>
+                                    </button>
+
+                                    {/* Custom Color Popover */}
+                                    <div className="relative">
+                                        <button
+                                            ref={customBgBtnRef}
+                                            onClick={() => { setBgType('solid'); setShowBgPicker(!showBgPicker); }}
+                                            className={`relative flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border transition-all cursor-pointer ${bgType === 'solid' && bgColor !== '#FFFFFF' && bgColor !== '#262626' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'}`}
+                                        >
+                                            <div className="w-4 h-4 rounded-full border border-zinc-200" style={{ backgroundColor: bgColor }} />
+                                            <span className="text-[9px] font-bold uppercase">Custom</span>
+                                        </button>
+                                        {showBgPicker && createPortal(
+                                            <div
+                                                className="fixed z-[100] -translate-y-full mb-2"
+                                                style={{
+                                                    top: pickerPos.top,
+                                                    left: pickerPos.left
+                                                }}
+                                            >
+                                                <div className="relative">
+                                                    <AttractiveColorPicker
+                                                        color={bgColor}
+                                                        onChange={(color) => { setBgColor(color); setBgType('solid'); }}
+                                                        className="w-56"
+                                                    />
+                                                    {/* Backdrop to close when clicking outside */}
+                                                    <div
+                                                        className="fixed inset-0 -z-10"
+                                                        onClick={() => setShowBgPicker(false)}
+                                                    />
+                                                </div>
+                                            </div>,
+                                            document.body
+                                        )}
+                                    </div>
+
+                                    {/* Image Upload / Toggle */}
+                                    <div
+                                        onClick={() => {
+                                            if (bgImage) {
+                                                setBgType('image');
+                                            } else {
+                                                bgImageFileInputRef.current?.click();
+                                            }
+                                        }}
+                                        className={`relative flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border transition-all cursor-pointer group ${bgType === 'image' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'}`}
+                                    >
+                                        {bgImage ? (
+                                            <>
+                                                {/* Preview Thumbnail */}
+                                                <div className="w-4 h-4 rounded-md overflow-hidden border border-zinc-200">
+                                                    <img src={bgImage} alt="bg" className="w-full h-full object-cover" />
+                                                </div>
+                                                <span className="text-[9px] font-bold uppercase">Image</span>
+
+                                                {/* Replace Button (Small Overlay) */}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation(); // Prevent toggling logic
+                                                        bgImageFileInputRef.current?.click();
+                                                    }}
+                                                    className="absolute -top-1 -right-1 w-4 h-4 bg-zinc-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-zinc-800 transition-colors z-10"
+                                                    title="Replace Image"
+                                                >
+                                                    <ImageIcon size={8} />
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <ImageIcon size={16} />
+                                                <span className="text-[9px] font-bold uppercase">Image</span>
+                                            </>
+                                        )}
+
+                                        <input
+                                            ref={bgImageFileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => {
+                                                if (e.target.files[0]) {
+                                                    setBgImage(URL.createObjectURL(e.target.files[0]));
+                                                    setBgType('image');
+                                                }
+                                                // Reset value to allow re-uploading same file
+                                                e.target.value = null;
+                                            }}
+                                            className="hidden"
+                                        />
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => { setBgType('transparent'); }}
+                                    className={`w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border transition-all ${bgType === 'transparent' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}
+                                >
+                                    <Scan size={14} />
+                                    <span className="text-xs font-bold">Transparent BG</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
 
 
                 </div>
             </div>
 
             {/* ... CENTER WORKSPACE ... */}
-            <div className="flex-1 bg-[#f8f9fc] relative overflow-hidden ml-0">
-                {/* Top Bar */}
-                <div className="absolute top-8 left-8 z-10 pointer-events-none">
-                    <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-full shadow-sm border border-white/50 pointer-events-auto inline-flex items-center gap-2">
+            <div className="flex-1 bg-[#f8f9fc] relative overflow-hidden ml-0 lg:ml-0">
+                <div className="absolute top-8 left-8 lg:left-8 left-20 z-10 flex items-center gap-4">
+                    <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-full shadow-sm border border-white/50 inline-flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                        <h1 className="font-bold text-zinc-800 text-xs">Editor Live <span className="text-zinc-300 mx-2">|</span> <span className="text-indigo-600">{productName || 'Untitled Project'}</span></h1>
+                        <h1 className="font-bold text-zinc-800 text-xs">
+                            <span className="hidden sm:inline">Editor Live <span className="text-zinc-300 mx-2">|</span> </span>
+                            <span className="text-indigo-600">{productName || 'Untitled Project'}</span>
+                        </h1>
+                    </div>
+
+                    {/* Undo/Redo Controls */}
+                    <div className="flex bg-white/90 backdrop-blur-md p-1 rounded-full shadow-sm border border-white/50 pointer-events-auto">
+                        <button
+                            onClick={() => undo()}
+                            className="p-1.5 hover:bg-zinc-100 rounded-full text-zinc-600 transition-colors"
+                            title="Undo (Ctrl+Z)"
+                        >
+                            <RotateCcw size={16} />
+                        </button>
+                        <button
+                            onClick={() => redo()}
+                            className="p-1.5 hover:bg-zinc-100 rounded-full text-zinc-600 transition-colors"
+                            title="Redo (Ctrl+Y)"
+                        >
+                            <RotateCw size={16} />
+                        </button>
                     </div>
                 </div>
 
                 {/* Canvas Area - Grid Layout for Pattern Zones */}
-                <div className="w-full h-full overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] bg-[length:32px_32px] p-12 pr-[480px]">
-                    <div className="min-h-full grid grid-cols-2 gap-10 content-start justify-items-center pb-20 pt-10 max-w-5xl mx-auto">
+                <div className="w-full h-full overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] bg-[length:32px_32px] p-4 sm:p-8 lg:p-12 lg:pr-[410px]">
+                    <div className="min-h-full grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-10 content-start justify-items-center pb-20 pt-10 max-w-4xl mx-auto">
                         {Object.entries(meshConfig).filter(([_, cfg]) => cfg.maskUrl).map(([meshName, cfg]) => {
                             const isSelected = selectedMesh === meshName || (!selectedMesh && meshName === Object.keys(meshConfig)[0]);
                             return (
@@ -559,9 +749,10 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                                     textToPlace={activeTextToPlace}
                                     onUpdateTexture={onUpdateTexture}
                                     onUpdateNormal={applyNormal} // New prop
+                                    onUpdateColor={(c) => updateMeshColor(meshName, c)}
                                     onSelect={handlePatternSelect}
-                                    externalUpdate={stickerUpdate}
                                     fabricType={materialSettings.fabricType} // Pass type
+                                    fabricScale={materialSettings.fabricScale} // Pass scale
                                     bgColor={meshColors[meshName] || globalMaterial.color || "#ffffff"}
                                     isSelected={isSelected}
                                     onClick={() => setSelectedMesh(meshName)}
@@ -575,8 +766,18 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
             </div>
 
             {/* RIGHT: FLOATING 3D CARD */}
-            <div className="absolute top-6 right-6 bottom-6 w-[450px] pointer-events-none flex flex-col justify-center z-40">
-                <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden pointer-events-auto flex flex-col h-[700px] relative transition-all border border-zinc-100">
+            <div className={`
+                fixed lg:absolute 
+                top-0 lg:top-6 
+                right-0 lg:right-6 
+                bottom-0 lg:bottom-6 
+                w-full sm:w-[340px] lg:w-[380px] 
+                pointer-events-none flex flex-col justify-start 
+                z-40
+                transition-transform duration-300
+                ${previewOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
+            `}>
+                <div className="bg-white rounded-none lg:rounded-[2.5rem] shadow-2xl overflow-hidden pointer-events-auto flex flex-col h-full lg:h-[580px] relative transition-all border border-zinc-100">
                     {/* 3D Header */}
                     <div className="absolute top-6 left-6 z-10">
                         <span className="bg-white/80 backdrop-blur-xl px-3 py-1 rounded-lg text-[10px] font-black tracking-widest text-zinc-900 border border-white/50 shadow-sm uppercase">
@@ -584,67 +785,76 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                         </span>
                     </div>
 
-                    {/* Canvas */}
-                    <div className="flex-1 bg-[#F1F5F9] relative">
-                        <Canvas
-                            shadows
-                            camera={{ position: [0, 0, 3.5], fov: 40 }}
-                            gl={{
-                                preserveDrawingBuffer: true,
-                                antialias: true,
-                                toneMapping: THREE.ACESFilmicToneMapping,
-                                toneMappingExposure: 1.2
-                            }}
-                            dpr={[1, 2]}
-                        >
-                            <color attach="background" args={['#F1F5F9']} />
+                    {/* Canvas Container with "Space" */}
+                    <div className="p-4 flex-1 min-h-0 bg-[#1e1e1e]">
+                        <div className="w-full h-full rounded-2xl overflow-hidden relative shadow-inner ring-1 ring-white/10">
+                            <Canvas
+                                shadows
+                                camera={{ position: [0, 0, 3.5], fov: 40 }}
+                                gl={{
+                                    preserveDrawingBuffer: true,
+                                    antialias: true,
+                                    toneMapping: THREE.ACESFilmicToneMapping,
+                                    toneMappingExposure: brightness // Dynamic brightness
+                                }}
+                                dpr={[1, 2]}
+                            >
+                                {bgType === 'solid' && <color attach="background" args={[bgColor]} />}
+                                {bgType === 'image' && bgImage && <BackgroundTexture url={bgImage} />}
 
-                            <ambientLight intensity={0.5} />
+                                {/* Refined Auxiliary Lighting for Product Showcase */}
+                                {showAuxLights && (
+                                    <>
+                                        <ambientLight intensity={0.6} />
+                                        <spotLight
+                                            position={[10, 15, 10]} // More frontal/top-down
+                                            angle={0.5}
+                                            penumbra={1}
+                                            intensity={1.5}
+                                            castShadow
+                                            shadow-mapSize={[2048, 2048]}
+                                            shadow-bias={-0.0001}
+                                        />
+                                        {/* Fill/Rim Light */}
+                                        <pointLight position={[-10, 5, -10]} intensity={0.8} color="#eef2ff" />
+                                    </>
+                                )}
 
-                            <spotLight
-                                position={[5, 10, 5]}
-                                angle={0.4}
-                                penumbra={0.5}
-                                intensity={1.2}
-                                castShadow
-                                shadow-mapSize={[2048, 2048]}
-                                shadow-bias={-0.0001}
-                            />
 
-                            <pointLight position={[-10, 5, -5]} intensity={0.5} color="#eef2ff" />
 
-                            <Environment preset="city" blur={1} />
-
-                            <React.Suspense fallback={<Loader />}>
-                                <Center position={[0, -0.2, 0]}>
-                                    <DynamicModel
-                                        ref={modelRef}
-                                        url={glbUrl}
-                                        meshTextures={meshTextures}
-                                        meshNormals={meshNormals} // Pass normals
-                                        materialProps={{ color: globalMaterial.color }}
-                                        setMeshList={setMeshList}
+                                <React.Suspense fallback={<Loader />}>
+                                    <Environment preset={envPreset} blur={0.8} />
+                                    <Center position={[0, -0.2, 0]}>
+                                        <DynamicModel
+                                            ref={modelRef}
+                                            url={glbUrl}
+                                            meshTextures={meshTextures}
+                                            meshNormals={meshNormals} // Pass normals
+                                            meshColors={meshColors}
+                                            materialProps={{ color: globalMaterial?.color }}
+                                            setMeshList={setMeshList}
+                                        />
+                                    </Center>
+                                    <ContactShadows
+                                        position={[0, -1.4, 0]}
+                                        opacity={0.4}
+                                        scale={20}
+                                        blur={2.5}
+                                        color="#000000"
                                     />
-                                </Center>
-                                <ContactShadows
-                                    position={[0, -1.4, 0]}
-                                    opacity={0.4}
-                                    scale={20}
-                                    blur={2.5}
-                                    color="#000000"
+                                </React.Suspense>
+                                <OrbitControls
+                                    makeDefault
+                                    minDistance={1.5}
+                                    maxDistance={10}
+                                    enablePan={false}
+                                    enableDamping
+                                    dampingFactor={0.05}
+                                    minPolarAngle={Math.PI / 4}
+                                    maxPolarAngle={Math.PI / 1.8}
                                 />
-                            </React.Suspense>
-                            <OrbitControls
-                                makeDefault
-                                minDistance={1.5}
-                                maxDistance={10}
-                                enablePan={false}
-                                enableDamping
-                                dampingFactor={0.05}
-                                minPolarAngle={Math.PI / 4}
-                                maxPolarAngle={Math.PI / 1.8}
-                            />
-                        </Canvas>
+                            </Canvas>
+                        </div>
                     </div>
 
                     {/* Bottom Action Bar */}
@@ -666,6 +876,17 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
         </div >
     );
 };
+
+// Helper for Environment Presets
+const PresetBtn = ({ label, icon: Icon, active, onClick }) => (
+    <button
+        onClick={onClick}
+        className={`flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border transition-all ${active ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'}`}
+    >
+        <Icon size={16} />
+        <span className="text-[9px] font-bold uppercase tracking-wide">{label}</span>
+    </button>
+);
 
 // Internal Tooltip Button
 const TooltipButton = ({ icon: Icon, onClick, isActive }) => (

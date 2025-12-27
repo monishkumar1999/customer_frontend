@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 
-import { Stage, Layer, Image as KImage, Text, Transformer, Rect, Group } from "react-konva";
+import { Stage, Layer, Image as KImage, Text, Transformer, Rect, Group, Line } from "react-konva";
 import useImage from 'use-image';
 import { X, Copy, Trash, Layers } from 'lucide-react'; // Added Layers icon
 import { generateFabricNormalMap } from '../utils/textureUtils';
 import FloatingTextToolbar from './FloatingTextToolbar';
 import FloatingImageToolbar from './FloatingImageToolbar';
+import FloatingMeshToolbar from './FloatingMeshToolbar';
+import { useStore } from "../../store/useStore";
 
 const useDebounce = (callback, delay) => {
     const timeoutRef = useRef(null);
@@ -16,16 +18,59 @@ const useDebounce = (callback, delay) => {
 };
 
 // Refactored to look like a "Sewing Pattern" piece
-const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTexture, onUpdateNormal, onSelect, externalUpdate, fabricType = 'plain', bgColor = "#ffffff", isSelected, onClick, onPlaceSticker, onPlaceText }) => {
+const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTexture, onUpdateNormal, onUpdateColor, onSelect, fabricType = 'plain', fabricScale = 8, bgColor = "#ffffff", isSelected, onClick, onPlaceSticker, onPlaceText }) => {
     const stageRef = useRef(null);
     const normalStageRef = useRef(null); // Parallel stage for normal map
     const [maskImg, setMaskImg] = useState(null);
-    const [stickers, setStickers] = useState([]);
+
+    // Global Store
+    const { meshStickers, setMeshStickers } = useStore();
+    const stickers = meshStickers[meshName] || [];
+    const setStickers = (newStickersOrFn) => {
+        const nextStickers = typeof newStickersOrFn === 'function' ? newStickersOrFn(stickers) : newStickersOrFn;
+        setMeshStickers(meshName, nextStickers);
+    };
+
     const [selectedId, setSelectedId] = useState(null);
     const trRef = useRef(null);
 
     // Normal map resources
     const [fabricNormalImg, setFabricNormalImg] = useState(null); // The tiled background pattern
+    const [guides, setGuides] = useState({ x: null, y: null });
+
+    const handleDragMove = (e) => {
+        if (!maskImg) return;
+        const node = e.target;
+
+        // Piece Center
+        const centerX = maskImg.naturalWidth / 2;
+        const centerY = maskImg.naturalHeight / 2;
+
+        // Item bounds (scaled)
+        const itemWidth = node.width() * node.scaleX();
+        const itemHeight = node.height() * node.scaleY();
+
+        // Item Center
+        const itemCenterX = node.x() + itemWidth / 2;
+        const itemCenterY = node.y() + itemHeight / 2;
+
+        const SNAP_THRESHOLD = 5;
+        let newGuides = { x: null, y: null };
+
+        // Snap X
+        if (Math.abs(itemCenterX - centerX) < SNAP_THRESHOLD) {
+            node.x(centerX - itemWidth / 2);
+            newGuides.x = centerX;
+        }
+
+        // Snap Y
+        if (Math.abs(itemCenterY - centerY) < SNAP_THRESHOLD) {
+            node.y(centerY - itemHeight / 2);
+            newGuides.y = centerY;
+        }
+
+        setGuides(newGuides);
+    };
 
     useEffect(() => {
         if (!maskUrl) return;
@@ -48,16 +93,16 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
         });
     }, [maskUrl]);
 
-    // Generate/Update Fabric Normal Pattern when fabricType changes
+    // Generate/Update Fabric Normal Pattern when fabricType or fabricScale changes
     useEffect(() => {
-        const dataUrl = generateFabricNormalMap(512, 512, 8, fabricType);
+        const dataUrl = generateFabricNormalMap(512, 512, fabricScale, fabricType);
         const img = new window.Image();
         img.src = dataUrl;
         img.onload = () => {
-            console.log("Fabric Normal Pattern Loaded");
+            console.log("Fabric Normal Pattern Loaded", { fabricScale, fabricType });
             setFabricNormalImg(img);
         };
-    }, [fabricType]);
+    }, [fabricType, fabricScale]);
 
     const addSticker = () => {
         // ...
@@ -159,25 +204,6 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
         });
     }, []);
 
-    // Handle External Updates (from Sidebar)
-    useEffect(() => {
-        if (externalUpdate && externalUpdate.meshName === meshName) {
-            if (externalUpdate.changes._deleted) {
-                // Handle Deletion
-                setStickers(prev => prev.filter(s => s.id !== externalUpdate.id));
-                if (selectedId === externalUpdate.id) setSelectedId(null);
-            } else {
-                // Handle Property Update
-                setStickers(prev => prev.map(s => {
-                    if (s.id === externalUpdate.id) {
-                        return { ...s, ...externalUpdate.changes };
-                    }
-                    return s;
-                }));
-            }
-            triggerExport();
-        }
-    }, [externalUpdate, meshName, selectedId]);
 
     const performExport = () => {
         if (!stageRef.current) return;
@@ -291,14 +317,14 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
 
     if (!maskImg) return <div className="w-[300px] h-[300px] bg-zinc-200 rounded-lg animate-pulse" />;
 
-    const maxSize = 340;
+    const maxSize = 280;
     const ratio = Math.min(maxSize / maskImg.naturalWidth, maxSize / maskImg.naturalHeight);
     const w = maskImg.naturalWidth * ratio;
     const h = maskImg.naturalHeight * ratio;
 
     return (
         <div
-            className={`relative group transition-all duration-300 p-2 z-10 ${stickerUrl ? 'cursor-crosshair' : ''}`}
+            className={`relative group transition-all duration-300 p-2 ${isSelected ? 'z-40' : 'z-10'} ${stickerUrl ? 'cursor-crosshair' : ''}`}
             onClick={onClick}
         >
             {/* Simple Mesh Name & Controls floating above */}
@@ -390,6 +416,16 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                 );
             })()}
 
+            {/* MESH TOOLBAR - Show when mesh is selected but no sticker is selected */}
+            {isSelected && !selectedId && !textToPlace && !stickerUrl && (
+                <FloatingMeshToolbar
+                    meshName={meshName}
+                    currentColor={bgColor}
+                    onColorChange={onUpdateColor}
+                    position={{ top: 20, left: w / 2 }} // Center top relative to canvas
+                />
+            )}
+
             {/* CANVAS CONTAINER */}
             <div
                 className={`rounded-lg overflow-hidden transition-all duration-300 bg-gray-800 ${isSelected ? 'ring-4 ring-indigo-500 shadow-xl scale-[1.02]' : ''}`}
@@ -447,6 +483,26 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                             />
                         </Group>
 
+                        {/* Alignment Guides */}
+                        {guides.x !== null && (
+                            <Line
+                                points={[guides.x, 0, guides.x, maskImg.naturalHeight]}
+                                stroke="#4f46e5"
+                                strokeWidth={1}
+                                dash={[4, 4]}
+                                listening={false}
+                            />
+                        )}
+                        {guides.y !== null && (
+                            <Line
+                                points={[0, guides.y, maskImg.naturalWidth, guides.y]}
+                                stroke="#4f46e5"
+                                strokeWidth={1}
+                                dash={[4, 4]}
+                                listening={false}
+                            />
+                        )}
+
                         {/* Stickers / Text */}
                         {stickers.map((s, i) => {
                             if (s.type === 'text') {
@@ -489,8 +545,10 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                                             setStickers(newStickers);
                                             triggerExport();
                                         }}
+                                        onDragMove={handleDragMove}
                                         onDragEnd={(e) => {
                                             const node = e.target;
+                                            setGuides({ x: null, y: null });
                                             const newStickers = [...stickers];
                                             newStickers[i] = { ...newStickers[i], x: node.x(), y: node.y() };
                                             setStickers(newStickers);
@@ -530,9 +588,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                                         // Simplified approach: Just save width/height and reset scale, 
                                         // BUT if we want to support Flip, we need to respect the sign of scaleX.
 
-                                        // Logic fix: Don't force reset scale to 1 if we want to support flips via scaleX
-                                        // OR: normalize width * scaleX and save that.
-                                        // Let's stick to saving width/height and resetting scale to 1 for simplicity, 
+                                        // Logic fix: Don't force reset scale to 1 if we want to support flips
                                         // UNLESS we want to support flip.
                                         // If we support flip via scaleX, we shouldn't reset scaleX to 1 blindly.
 
@@ -553,8 +609,10 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                                         setStickers(newStickers);
                                         triggerExport();
                                     }}
+                                    onDragMove={handleDragMove}
                                     onDragEnd={(e) => {
                                         const node = e.target;
+                                        setGuides({ x: null, y: null });
                                         const newStickers = [...stickers];
                                         newStickers[i] = { ...newStickers[i], x: node.x(), y: node.y() };
                                         setStickers(newStickers);

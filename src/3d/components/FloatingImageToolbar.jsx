@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MoreHorizontal, Trash, Copy, BringToFront, SendToBack, ArrowUp, ArrowDown, Lock } from 'lucide-react';
+import { MoreHorizontal, Trash, Copy, BringToFront, SendToBack, ArrowUp, ArrowDown, Lock, Droplet } from 'lucide-react';
 
 const FloatingImageToolbar = ({
     sticker,
@@ -13,6 +13,7 @@ const FloatingImageToolbar = ({
     position // { top, left }
 }) => {
     const [showMore, setShowMore] = useState(false);
+    const [showOpacity, setShowOpacity] = useState(false);
     const toolbarRef = useRef(null);
 
     // Close dropdowns when clicking outside
@@ -20,6 +21,7 @@ const FloatingImageToolbar = ({
         const handleClickOutside = (event) => {
             if (toolbarRef.current && !toolbarRef.current.contains(event.target)) {
                 setShowMore(false);
+                setShowOpacity(false); // Close opacity popover too
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -45,6 +47,40 @@ const FloatingImageToolbar = ({
         >
             {/* Toolbar Body */}
             <div className="flex items-center gap-1 p-1 bg-[#1e1e1e] rounded-full shadow-2xl border border-zinc-700/50 text-white">
+
+                {/* Opacity Selector - NEW */}
+                <div className="relative">
+                    <button
+                        onClick={() => { setShowOpacity(!showOpacity); setShowMore(false); }}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showOpacity ? 'bg-zinc-800' : 'hover:bg-zinc-800 text-zinc-300'}`}
+                        title="Opacity"
+                    >
+                        <div className="relative">
+                            <Droplet size={16} />
+                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-zinc-500" style={{ width: '12px', opacity: (sticker.opacity ?? 1) }} />
+                        </div>
+                    </button>
+
+                    {showOpacity && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 bg-[#1e1e1e] border border-zinc-700/50 rounded-xl shadow-xl p-4 z-[60] flex flex-col gap-2">
+                            <div className="flex justify-between text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                                <span>Opacity</span>
+                                <span>{Math.round((sticker.opacity ?? 1) * 100)}%</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={sticker.opacity ?? 1}
+                                onChange={(e) => updateSticker('opacity', parseFloat(e.target.value))}
+                                className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none accent-indigo-500 cursor-pointer"
+                            />
+                        </div>
+                    )}
+                </div>
+
+                <div className="w-px h-4 bg-zinc-700 mx-1" />
 
                 {/* Texture/Fabric Toggle */}
                 <button

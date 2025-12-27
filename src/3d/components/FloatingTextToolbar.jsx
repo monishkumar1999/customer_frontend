@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Type, Palette, AlignLeft, AlignCenter, AlignRight, MoreHorizontal, Trash, Copy, Check, ChevronDown, MoveHorizontal, Scaling, BringToFront, SendToBack } from 'lucide-react';
+import { Type, Palette, AlignLeft, AlignCenter, AlignRight, MoreHorizontal, Trash, Copy, Check, ChevronDown, MoveHorizontal, Scaling, BringToFront, SendToBack, Droplet } from 'lucide-react';
+import AttractiveColorPicker from "../../components/ui/AttractiveColorPicker";
 
 const FONTS = [
     { name: "Inter", family: "Inter" },
@@ -42,6 +43,7 @@ const FloatingTextToolbar = ({
 }) => {
     const [showFonts, setShowFonts] = useState(false);
     const [showColors, setShowColors] = useState(false);
+    const [showOpacity, setShowOpacity] = useState(false);
     const [showMore, setShowMore] = useState(false);
     const toolbarRef = useRef(null);
 
@@ -137,24 +139,59 @@ const FloatingTextToolbar = ({
                         />
                     </button>
                     {showColors && (
-                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-2 bg-[#1e1e1e] border border-zinc-700/50 rounded-xl shadow-xl flex gap-1 z-[60] flex-wrap w-40 justify-center">
-                            {PRESET_COLORS.map(c => (
-                                <button
-                                    key={c}
-                                    onClick={() => { updateSticker('fill', c); setShowColors(false); }}
-                                    className={`w-6 h-6 rounded-full border transition-all ${sticker.fill === c ? 'border-white scale-110' : 'border-transparent hover:scale-110'}`}
-                                    style={{ backgroundColor: c }}
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-2 bg-[#1e1e1e] border border-zinc-700/50 rounded-2xl shadow-xl z-[60] w-56">
+                            <div className="flex flex-wrap gap-1.5 justify-center mb-3 p-1">
+                                {PRESET_COLORS.map(c => (
+                                    <button
+                                        key={c}
+                                        onClick={() => { updateSticker('fill', c); }}
+                                        className={`w-6 h-6 rounded-full border-2 transition-all ${sticker.fill === c ? 'border-white scale-110 shadow-lg shadow-white/20' : 'border-transparent hover:scale-110'}`}
+                                        style={{ backgroundColor: c }}
+                                    />
+                                ))}
+                            </div>
+
+                            <div className="border-t border-zinc-800 pt-3">
+                                <AttractiveColorPicker
+                                    color={sticker.fill}
+                                    onChange={(color) => updateSticker('fill', color)}
+                                    className="border-none shadow-none p-0 bg-transparent"
                                 />
-                            ))}
-                            {/* Custom Color Native Input */}
-                            <label className="w-6 h-6 rounded-full border border-zinc-600 bg-gradient-to-br from-red-500 via-green-500 to-blue-500 flex items-center justify-center cursor-pointer hover:scale-110 transition-transform">
-                                <input
-                                    type="color"
-                                    className="hidden"
-                                    value={sticker.fill}
-                                    onChange={(e) => updateSticker('fill', e.target.value)}
-                                />
-                            </label>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+                {/* Opacity Selector */}
+                <div className="relative">
+                    <button
+                        onClick={() => { setShowOpacity(!showOpacity); setShowFonts(false); setShowColors(false); setShowMore(false); }}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showOpacity ? 'bg-zinc-800' : 'hover:bg-zinc-800 text-zinc-300'}`}
+                        title="Opacity"
+                    >
+                        <div className="relative">
+                            <Droplet size={16} />
+                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-zinc-500" style={{ width: '12px', opacity: (sticker.opacity ?? 1) }} />
+                        </div>
+                    </button>
+
+                    {showOpacity && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 bg-[#1e1e1e] border border-zinc-700/50 rounded-xl shadow-xl p-4 z-[60] flex flex-col gap-2">
+                            <div className="flex justify-between text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                                <span>Opacity</span>
+                                <span>{Math.round((sticker.opacity ?? 1) * 100)}%</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={sticker.opacity ?? 1}
+                                onChange={(e) => updateSticker('opacity', parseFloat(e.target.value))}
+                                className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none accent-indigo-500 cursor-pointer"
+                            />
                         </div>
                     )}
                 </div>
