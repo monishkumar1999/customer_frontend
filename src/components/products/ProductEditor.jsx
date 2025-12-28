@@ -30,11 +30,14 @@ const ProductEditor = () => {
 
     // -- Editor State --
     const [meshTextures, setMeshTextures] = useState({});
-    const [globalMaterial, setGlobalMaterial] = useState({ color: "#ffffff", roughness: 0.5, metalness: 0, wireframe: false });
     const [activeStickerUrl, setActiveStickerUrl] = useState(null);
 
     // -- Store Actions --
-    const { setProductName, setSubcategory } = useStore();
+    const {
+        productName, subcategory, setProductName, setSubcategory,
+        savedDesigns, loadDesign, resetDesignState,
+        globalMaterial, setGlobalMaterial // Added setGlobalMaterial
+    } = useStore();
 
     useEffect(() => {
         const fetchProduct = async () => {
@@ -63,6 +66,20 @@ const ProductEditor = () => {
                     // 3. Populate Store for Edit Mode
                     setProductName(product.name);
                     setSubcategory(product.subcategory_id);
+
+                    // 4. Load Recent Saved Design if exists, else Reset
+                    const productDesigns = savedDesigns.filter(d => String(d.productId) === String(id));
+                    console.log("Found designs for product", id, productDesigns.length);
+                    if (productDesigns.length > 0) {
+                        const latestDesign = productDesigns.sort((a, b) =>
+                            new Date(b.timestamp) - new Date(a.timestamp)
+                        )[0];
+                        console.log("Loading latest design", latestDesign.id);
+                        loadDesign(latestDesign.id);
+                    } else {
+                        console.log("No saved design found, resetting state");
+                        resetDesignState();
+                    }
                 }
             } catch (error) {
                 console.error("Failed to fetch product", error);
@@ -74,7 +91,7 @@ const ProductEditor = () => {
         if (id) {
             fetchProduct();
         }
-    }, [id, setProductName, setSubcategory]);
+    }, [id, setProductName, setSubcategory, savedDesigns, loadDesign, resetDesignState]);
 
     const applyTexture = useCallback((meshName, dataUrl) => {
         if (!dataUrl) {
@@ -120,17 +137,20 @@ const ProductEditor = () => {
         );
     }
 
-    // Since SetupPhase is missing, we render DesignPhase directly.
+    // Pass store's globalMaterial and setGlobalMaterial to DesignPhase
     return (
         <div className="w-full h-screen bg-[#f8f9fc] text-zinc-900 font-sans overflow-hidden">
             <DesignPhase
-                productId={id} // Pass text ID for update logic
+                productId={id}
                 glbUrl={glbUrl}
                 meshConfig={meshConfig}
                 meshTextures={meshTextures}
                 globalMaterial={globalMaterial}
                 activeStickerUrl={activeStickerUrl}
-                setGlobalMaterial={setGlobalMaterial}
+                setGlobalMaterial={(val) => {
+                    // val is { color, roughness, metalness, wireframe }
+                    useStore.setState({ globalMaterial: { ...globalMaterial, ...val } });
+                }}
                 setActiveStickerUrl={setActiveStickerUrl}
                 onBack={() => navigate('/products')}
                 onUpdateTexture={applyTexture}

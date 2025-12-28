@@ -8,6 +8,7 @@ import CategoryManager from "../components/admin/CategoryManager";
 import SubCategoryManager from "../components/admin/SubCategoryManager";
 import ProductList from "../components/products/ProductList";
 import ProductEditor from "../components/products/ProductEditor";
+import SavedDesigns from "../components/products/SavedDesigns";
 import LandingPage from "../components/landing/LandingPage";
 
 
@@ -33,6 +34,7 @@ const AppRoutes = () => {
         <Route path="/subcategories" element={<SubCategoryManager />} />
         <Route path="/products" element={<ProductList />} />
         <Route path="/product/edit/:id" element={<ProductEditor />} />
+        <Route path="/saved-designs" element={<SavedDesigns />} />
         <Route path="/uvMap" element={<UvMap />} />
 
       </Route>

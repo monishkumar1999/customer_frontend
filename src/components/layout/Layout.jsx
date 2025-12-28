@@ -24,7 +24,14 @@ const Header = () => {
                             </>
                         )}
                     </NavLink>
-                    <NavLink to="/designs" className={({ isActive }) => `px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive ? 'text-slate-900 bg-slate-50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}>My Designs</NavLink>
+                    <NavLink to="/saved-designs" className={({ isActive }) => `px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive ? 'text-primary bg-primary/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}>
+                        {({ isActive }) => (
+                            <>
+                                Saved Designs
+                                {isActive && <span className="absolute bottom-0 left-3 right-3 h-0.5 bg-primary rounded-full"></span>}
+                            </>
+                        )}
+                    </NavLink>
                     <NavLink to="/studio" className={({ isActive }) => `px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive ? 'text-slate-900 bg-slate-50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}>AI Studio</NavLink>
                     <NavLink to="/templates" className={({ isActive }) => `px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive ? 'text-slate-900 bg-slate-50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}>Templates</NavLink>
                 </nav>

@@ -121,6 +121,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                 id: Date.now().toString(),
                 type: 'image',
                 image: img,
+                url: stickerUrl, // Save the URL for persistence
                 x: startX,
                 y: startY,
                 width: 80,
@@ -203,6 +204,25 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
             triggerExport();
         });
     }, []);
+
+    // REHYDRATION: If stickers have a URL but no image object (after load), re-load them
+    useEffect(() => {
+        let needsUpdate = false;
+        stickers.forEach((s) => {
+            if (s.type === 'image' && !s.image && s.url) {
+                needsUpdate = true;
+                const img = new window.Image();
+                img.crossOrigin = "anonymous";
+                img.src = s.url;
+                img.onload = () => {
+                    setStickers(prev => prev.map(st =>
+                        st.id === s.id ? { ...st, image: img } : st
+                    ));
+                    triggerExport();
+                };
+            }
+        });
+    }, [stickers]);
 
 
     const performExport = () => {
