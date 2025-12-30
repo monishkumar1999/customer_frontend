@@ -100,7 +100,17 @@ const DynamicModel = React.memo(React.forwardRef(({ url, meshTextures, meshNorma
                 // 2. Upgrade to MeshPhysicalMaterial if needed (for Sheen support)
                 if (child.material.type !== "MeshPhysicalMaterial") {
                     const newMat = new THREE.MeshPhysicalMaterial();
-                    THREE.MeshPhysicalMaterial.prototype.copy.call(newMat, child.material);
+                    const source = child.material;
+
+                    // Copy basic properties safely
+                    newMat.name = source.name;
+                    if (source.color) newMat.color.copy(source.color);
+                    if (source.map) newMat.map = source.map;
+                    if (source.opacity !== undefined) newMat.opacity = source.opacity;
+                    if (source.transparent !== undefined) newMat.transparent = source.transparent;
+                    if (source.alphaTest !== undefined) newMat.alphaTest = source.alphaTest;
+                    if (source.side !== undefined) newMat.side = source.side;
+
                     child.material = newMat;
                     child.userData.isCloned = true;
                 }
