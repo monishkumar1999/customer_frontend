@@ -1,9 +1,16 @@
 import { create } from 'zustand';
 import { temporal } from 'zundo';
+import api from '../api/axios';
 
 export const useStore = create(
   temporal(
     (set, get) => ({
+      // Backend Save UI State
+      isSaving: false,
+      saveError: null,
+      saveSuccess: false,
+      isFetching: false,
+      fetchError: null,
       // Phase Management
       phase: 1, // 1: Model, 2: UV, 3: Arrangement, 4: Design
       setPhase: (phase) => set({ phase }),
@@ -95,7 +102,7 @@ export const useStore = create(
       setActiveStickerUrl: (url) => set({ activeStickerUrl: url }),
 
       // --- PERSISTENCE / SAVED DESIGNS ---
-      savedDesigns: JSON.parse(localStorage.getItem('saved_designs') || '[]'),
+      savedDesigns: [],
 
       saveDesign: (productId) => {
         const state = get();
@@ -112,17 +119,80 @@ export const useStore = create(
         };
         const updatedDesigns = [newDesign, ...state.savedDesigns];
         set({ savedDesigns: updatedDesigns });
-        localStorage.setItem('saved_designs', JSON.stringify(updatedDesigns));
+      },
+
+      saveDesignToBackend: async (productId) => {
+        const state = get();
+        set({ isSaving: true, saveError: null, saveSuccess: false });
+
+        const design_data = {
+          meshColors: state.meshColors,
+          meshStickers: state.meshStickers,
+          materialSettings: state.materialSettings,
+          globalMaterial: state.globalMaterial,
+        };
+
+        try {
+          const response = await api.post('/product/save-design', {
+            productId,
+            productName: state.productName,
+            design_data,
+            // thumbnail_url: state.thumbnailUrl, // Add if thumbnail generation is implemented
+          });
+
+          if (response.data.success) {
+            set({ isSaving: false, saveSuccess: true });
+            console.log("Design saved to backend successfully:", response.data);
+            // After saving, fetch again to keep list in sync
+            get().fetchSavedDesigns();
+            return true;
+          }
+          throw new Error(response.data.message || "Failed to save design");
+        } catch (error) {
+          const message = error.response?.data?.message || error.message || "An error occurred while saving";
+          set({ isSaving: false, saveError: message });
+          console.error("Backend save error:", error);
+          return false;
+        }
+      },
+
+      fetchSavedDesigns: async () => {
+        set({ isFetching: true, fetchError: null });
+        try {
+          const response = await api.get('/product/designs');
+          if (response.data.success) {
+            // Map backend fields to frontend expectations if necessary
+            const designs = (response.data.data || []).map(d => ({
+              ...d,
+              productName: d.designName || d.productName || (d.Product ? d.Product.name : 'Unnamed Design'),
+              // Ensure design_data is accessible regardless of naming (designData vs design_data)
+              design_data: d.designData || d.design_data
+            }));
+
+            set({
+              savedDesigns: designs,
+              isFetching: false
+            });
+            return true;
+          }
+          throw new Error(response.data.message || "Failed to fetch designs");
+        } catch (error) {
+          const message = error.response?.data?.message || error.message || "An error occurred while fetching designs";
+          set({ isFetching: false, fetchError: message });
+          console.error("Fetch designs error:", error);
+          return false;
+        }
       },
 
       loadDesign: (designId) => {
         const design = get().savedDesigns.find(d => d.id === designId);
         if (design) {
+          const data = design.design_data || {};
           set({
-            meshColors: design.meshColors || {},
-            meshStickers: design.meshStickers || {},
-            globalMaterial: design.globalMaterial || { color: '#ffffff', roughness: 0.5, metalness: 0.0 },
-            materialSettings: design.materialSettings || {
+            meshColors: data.meshColors || {},
+            meshStickers: data.meshStickers || {},
+            globalMaterial: data.globalMaterial || { color: '#ffffff', roughness: 0.5, metalness: 0.0 },
+            materialSettings: data.materialSettings || {
               roughness: 0.75,
               metalness: 0.0,
               sheen: 0.6,
@@ -139,10 +209,14 @@ export const useStore = create(
         return false;
       },
 
-      deleteDesign: (designId) => {
-        const updatedDesigns = get().savedDesigns.filter(d => d.id !== designId);
-        set({ savedDesigns: updatedDesigns });
-        localStorage.setItem('saved_designs', JSON.stringify(updatedDesigns));
+      deleteDesign: async (designId) => {
+        try {
+          // You might want to add a backend call here: await api.delete(`/product/design/${designId}`);
+          const updatedDesigns = get().savedDesigns.filter(d => d.id !== designId);
+          set({ savedDesigns: updatedDesigns });
+        } catch (error) {
+          console.error("Delete design error:", error);
+        }
       }
     }),
     {

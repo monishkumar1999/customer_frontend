@@ -99,7 +99,15 @@ const DebouncedColorPicker = ({ value, onChange, className }) => {
 };
 
 const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMaterial, activeStickerUrl, setGlobalMaterial, setActiveStickerUrl, onBack, onUpdateTexture }) => {
-    const { materialSettings, setMaterialSetting, saveMaterialConfiguration, productName, subcategory, meshColors, setMeshColor, savedDesigns, saveDesign, loadDesign, deleteDesign } = useStore();
+    // Targeted Selectors for Stability
+    const materialSettings = useStore(state => state.materialSettings);
+    const setMaterialSetting = useStore(state => state.setMaterialSetting);
+    const productName = useStore(state => state.productName);
+    const meshColors = useStore(state => state.meshColors);
+    const setMeshColor = useStore(state => state.setMeshColor);
+    const meshStickers = useStore(state => state.meshStickers);
+    const setMeshStickers = useStore(state => state.setMeshStickers);
+
     const { undo, redo, clear } = useStore.temporal.getState();
 
     const [activeTab, setActiveTab] = useState('design'); // 'design', 'uploads', 'studio'
@@ -116,7 +124,6 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
     const [opacity, setOpacity] = useState(1);
     const [activeTextToPlace, setActiveTextToPlace] = useState(null);
     const [editingSelection, setEditingSelection] = useState(null); // { meshName, id, type, text, fontFamily, fill, opacity }
-    const { meshStickers, setMeshStickers } = useStore();
 
     const [meshNormals, setMeshNormals] = useState({}); // New state for baked normals
     const [meshList, setMeshList] = useState([]); // Missing state for mesh list
@@ -267,16 +274,18 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
         }
     };
 
-    const applyNormal = (meshName, normalUri) => {
+    const applyNormal = useCallback((meshName, normalUri) => {
         setMeshNormals(prev => {
             if (!normalUri) {
+                if (!prev[meshName]) return prev;
                 const newState = { ...prev };
                 delete newState[meshName];
                 return newState;
             }
+            if (prev[meshName] === normalUri) return prev;
             return { ...prev, [meshName]: normalUri };
         });
-    };
+    }, []);
 
     return (
         <div className="flex w-full h-full relative bg-[#f8f9fc] overflow-hidden">
@@ -306,7 +315,7 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
             `}>
                 {/* TABS HEADER */}
                 <div className="flex items-center p-2 gap-1 bg-white border-b border-zinc-100 mx-4 mt-4 rounded-xl shadow-sm">
-                    {['design', 'studio', 'uploads', 'saved'].map(tab => (
+                    {['design', 'studio', 'uploads'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
@@ -315,7 +324,6 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                             {tab === 'design' && <Layers size={14} />}
                             {tab === 'studio' && <Settings size={14} />}
                             {tab === 'uploads' && <ImageIcon size={14} />}
-                            {tab === 'saved' && <Save size={14} />}
                             {tab.charAt(0).toUpperCase() + tab.slice(1)}
                         </button>
                     ))}
@@ -701,44 +709,6 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                         </div>
                     )}
 
-                    {/* --- SAVED DESIGNS TAB --- */}
-                    {activeTab === 'saved' && (
-                        <div className="space-y-4">
-                            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Saved Designs</label>
-                            {savedDesigns.length === 0 ? (
-                                <div className="text-center py-8">
-                                    <p className="text-zinc-400 text-xs">No saved designs yet.</p>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {savedDesigns.map((design) => (
-                                        <div key={design.id} className="bg-white border border-zinc-200 rounded-xl p-3 shadow-sm hover:border-indigo-200 transition-all group">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <div>
-                                                    <p className="text-xs font-bold text-zinc-700">{design.productName || 'Untitled Design'}</p>
-                                                    <p className="text-[10px] text-zinc-400">{new Date(design.timestamp).toLocaleString()}</p>
-                                                </div>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); deleteDesign(design.id); }}
-                                                    className="text-zinc-300 hover:text-red-500 transition-colors"
-                                                >
-                                                    <Trash size={14} />
-                                                </button>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <button
-                                                    onClick={() => loadDesign(design.id)}
-                                                    className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1.5"
-                                                >
-                                                    <Eye size={12} /> Preview/Edit
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
 
 
 
@@ -775,17 +745,19 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                         <div className="w-[1px] h-4 bg-zinc-200 mx-1" />
                         <button
                             onClick={() => {
-                                saveDesign();
-                                // Optional: briefly show success state
-                                setActiveTab('saved');
+                                // Save locally (optional)
+                                saveDesign(productId);
+                                // No backend save
                             }}
-                            className="p-1.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-full text-zinc-600 transition-all"
-                            title="Save Design"
+                            className="p-1.5 hover:bg-indigo-50 hover:text-indigo-600 text-zinc-600 rounded-full transition-all"
+                            title="Save Local"
                         >
                             <Save size={16} />
                         </button>
                     </div>
                 </div>
+
+                {/* Save Feedback Toast (Simple implementation) */}
 
                 {/* Canvas Area - Grid Layout for Pattern Zones */}
                 <div className="w-full h-full overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] bg-[length:32px_32px] p-4 sm:p-8 lg:p-12 lg:pr-[410px]">

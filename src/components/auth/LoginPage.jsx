@@ -1,16 +1,39 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../../api/axios';
 
 const LoginPage = () => {
     const navigate = useNavigate();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
-        // Mock login - in a real app this would call an API
-        console.log("Logging in with", email, password);
-        navigate('/');
+        setError('');
+        setLoading(true);
+
+        try {
+            const response = await api.post('/customer/login', {
+                email,
+                password
+            });
+
+            if (response.data.success) {
+                console.log("Login successful", response.data);
+                // The backend sends a cookie with HttpOnly, but we also get user info in body
+                if (response.data.customer) {
+                    localStorage.setItem('customer', JSON.stringify(response.data.customer));
+                }
+                navigate('/');
+            }
+        } catch (err) {
+            console.error("Login error:", err);
+            setError(err.response?.data?.message || "Login failed. Please check your credentials.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -99,6 +122,11 @@ const LoginPage = () => {
                             <span className="text-xs uppercase font-semibold text-slate-400 whitespace-nowrap">Or sign in with</span>
                             <div className="h-px bg-slate-200 w-full"></div>
                         </div>
+                        {error && (
+                            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm font-medium">
+                                {error}
+                            </div>
+                        )}
                         <form className="space-y-5" onSubmit={handleLogin}>
                             <div className="space-y-1.5">
                                 <label className="block text-sm font-semibold text-slate-700" htmlFor="email">Email Address</label>
@@ -111,6 +139,7 @@ const LoginPage = () => {
                                         type="email"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
+                                        required
                                     />
                                 </div>
                             </div>
@@ -128,6 +157,7 @@ const LoginPage = () => {
                                         type="password"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
+                                        required
                                     />
                                     <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer hover:text-slate-600">visibility_off</span>
                                 </div>
@@ -138,8 +168,12 @@ const LoginPage = () => {
                                 </div>
                                 <label className="text-sm font-medium text-slate-600 cursor-pointer select-none" htmlFor="remember">Remember me for 30 days</label>
                             </div>
-                            <button className="w-full h-12 bg-gradient-to-r from-[#137fec] to-blue-600 hover:from-[#0b63c1] hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 text-base cursor-pointer" type="submit">
-                                Log In
+                            <button
+                                className="w-full h-12 bg-gradient-to-r from-[#137fec] to-blue-600 hover:from-[#0b63c1] hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 text-base cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                type="submit"
+                                disabled={loading}
+                            >
+                                {loading ? 'Logging In...' : 'Log In'}
                             </button>
                         </form>
                         <div className="sm:hidden text-center text-sm font-medium">

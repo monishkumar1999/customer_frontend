@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import * as THREE from "three";
 import api from "../../api/axios";
 import DesignPhase from "../../3d/components/DesignPhase";
@@ -35,7 +35,6 @@ const ProductEditor = () => {
     // -- Store Actions --
     const {
         productName, subcategory, setProductName, setSubcategory,
-        savedDesigns, loadDesign, resetDesignState,
         globalMaterial, setGlobalMaterial // Added setGlobalMaterial
     } = useStore();
 
@@ -65,21 +64,7 @@ const ProductEditor = () => {
 
                     // 3. Populate Store for Edit Mode
                     setProductName(product.name);
-                    setSubcategory(product.subcategory_id);
-
-                    // 4. Load Recent Saved Design if exists, else Reset
-                    const productDesigns = savedDesigns.filter(d => String(d.productId) === String(id));
-                    console.log("Found designs for product", id, productDesigns.length);
-                    if (productDesigns.length > 0) {
-                        const latestDesign = productDesigns.sort((a, b) =>
-                            new Date(b.timestamp) - new Date(a.timestamp)
-                        )[0];
-                        console.log("Loading latest design", latestDesign.id);
-                        loadDesign(latestDesign.id);
-                    } else {
-                        console.log("No saved design found, resetting state");
-                        resetDesignState();
-                    }
+                    setSubcategory(product.subCategoryId || product.subcategory_id);
                 }
             } catch (error) {
                 console.error("Failed to fetch product", error);
@@ -91,7 +76,7 @@ const ProductEditor = () => {
         if (id) {
             fetchProduct();
         }
-    }, [id, setProductName, setSubcategory, savedDesigns, loadDesign, resetDesignState]);
+    }, [id, setProductName, setSubcategory]);
 
     const applyTexture = useCallback((meshName, dataUrl) => {
         if (!dataUrl) {

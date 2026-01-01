@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 import { Stage, Layer, Image as KImage, Text, Transformer, Rect, Group, Line } from "react-konva";
 import useImage from 'use-image';
@@ -8,6 +8,8 @@ import FloatingTextToolbar from './FloatingTextToolbar';
 import FloatingImageToolbar from './FloatingImageToolbar';
 import FloatingMeshToolbar from './FloatingMeshToolbar';
 import { useStore } from "../../store/useStore";
+
+const STABLE_EMPTY_ARRAY = [];
 
 const useDebounce = (callback, delay) => {
     const timeoutRef = useRef(null);
@@ -23,13 +25,24 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
     const normalStageRef = useRef(null); // Parallel stage for normal map
     const [maskImg, setMaskImg] = useState(null);
 
-    // Global Store
-    const { meshStickers, setMeshStickers } = useStore();
-    const stickers = meshStickers[meshName] || [];
-    const setStickers = (newStickersOrFn) => {
+    // Initial Layout Setup - Calculated early to avoid ReferenceErrors
+    const maxSize = 280;
+    const ratio = useMemo(() => {
+        if (!maskImg) return 1;
+        return Math.min(maxSize / maskImg.naturalWidth, maxSize / maskImg.naturalHeight);
+    }, [maskImg]);
+
+    const w = useMemo(() => maskImg ? maskImg.naturalWidth * ratio : maxSize, [maskImg, ratio]);
+    const h = useMemo(() => maskImg ? maskImg.naturalHeight * ratio : maxSize, [maskImg, ratio]);
+
+    // Global Store - Using selector for stability and performance
+    const stickers = useStore(useCallback(state => state.meshStickers[meshName] || STABLE_EMPTY_ARRAY, [meshName]));
+    const setMeshStickers = useStore(state => state.setMeshStickers);
+
+    const setStickers = useCallback((newStickersOrFn) => {
         const nextStickers = typeof newStickersOrFn === 'function' ? newStickersOrFn(stickers) : newStickersOrFn;
         setMeshStickers(meshName, nextStickers);
-    };
+    }, [meshName, setMeshStickers, stickers]);
 
     const [selectedId, setSelectedId] = useState(null);
     const trRef = useRef(null);
@@ -104,7 +117,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
         };
     }, [fabricType, fabricScale]);
 
-    const addSticker = () => {
+    const addSticker = useCallback(() => {
         // ...
         console.log("Adding sticker...", { stickerUrl });
         if (!stickerUrl) return;
@@ -126,8 +139,6 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
                 y: startY,
                 width: 80,
                 height: 80,
-                width: 80,
-                height: 80,
                 rotation: 0,
                 opacity: 1, // Default opacity
                 isFlat: false // Default: blend with fabric (false)
@@ -143,9 +154,9 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
             }, 100);
         };
         img.onerror = (err) => console.error("Failed to load sticker image", err);
-    };
+    }, [maskImg, onPlaceSticker, setStickers, stickerUrl]);
 
-    const addText = () => {
+    const addText = useCallback(() => {
         if (!textToPlace) return;
 
         const startX = maskImg ? (maskImg.naturalWidth / 2) - 50 : 50;
@@ -174,7 +185,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
         setTimeout(() => {
             if (onPlaceText) onPlaceText();
         }, 100);
-    };
+    }, [maskImg, onPlaceText, setStickers, textToPlace]);
 
     // Auto-add sticker if this zone is selected when a new sticker is uploaded
     useEffect(() => {
@@ -205,43 +216,22 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
         });
     }, []);
 
-    // REHYDRATION: If stickers have a URL but no image object (after load), re-load them
-    useEffect(() => {
-        let needsUpdate = false;
-        stickers.forEach((s) => {
-            if (s.type === 'image' && !s.image && s.url) {
-                needsUpdate = true;
-                const img = new window.Image();
-                img.crossOrigin = "anonymous";
-                img.src = s.url;
-                img.onload = () => {
-                    setStickers(prev => prev.map(st =>
-                        st.id === s.id ? { ...st, image: img } : st
-                    ));
-                    triggerExport();
-                };
-            }
-        });
-    }, [stickers]);
 
 
-    const performExport = () => {
-        if (!stageRef.current) return;
+    const performExport = useCallback(() => {
+        if (!stageRef.current || !maskImg) return;
         if (trRef.current) trRef.current.nodes([]);
 
-        // OPTIMIZATION: Dynamically calculate ratio to match ORIGINAL resolution
-        // The stage is displayed small (w, h), but we want the texture to vary 
-        // to match the maskImg.naturalWidth exactly.
         const exportRatio = ratio > 0 ? (1 / ratio) : 2;
+        const TARGET_MAX_SIZE = 1024;
+        const finalExportRatio = Math.min(exportRatio, TARGET_MAX_SIZE / Math.max(w, h));
 
-        // 1. Export Color Map
-        const uri = stageRef.current.toDataURL({ pixelRatio: exportRatio });
+        const uri = stageRef.current.toDataURL({ pixelRatio: finalExportRatio });
         onUpdateTexture(meshName, uri);
 
-        // 2. Export Normal Map (if support enabled)
         if (normalStageRef.current && onUpdateNormal) {
             console.log("Exporting Normal Map for", meshName, "Has FabricImg:", !!fabricNormalImg);
-            const normUri = normalStageRef.current.toDataURL({ pixelRatio: exportRatio });
+            const normUri = normalStageRef.current.toDataURL({ pixelRatio: finalExportRatio });
             onUpdateNormal(meshName, normUri);
         }
 
@@ -249,7 +239,7 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
             const node = stageRef.current.findOne('#' + selectedId);
             if (node) trRef.current.nodes([node]);
         }
-    };
+    }, [meshName, maskImg, ratio, w, h, onUpdateTexture, onUpdateNormal, fabricNormalImg, selectedId]);
     // OPTIMIZATION: Increased debounce from 200ms to 300ms to allow smoother dragging.
     const triggerExport = useDebounce(performExport, 300);
 
@@ -336,11 +326,6 @@ const PatternZone = ({ meshName, maskUrl, stickerUrl, textToPlace, onUpdateTextu
     };
 
     if (!maskImg) return <div className="w-[300px] h-[300px] bg-zinc-200 rounded-lg animate-pulse" />;
-
-    const maxSize = 280;
-    const ratio = Math.min(maxSize / maskImg.naturalWidth, maxSize / maskImg.naturalHeight);
-    const w = maskImg.naturalWidth * ratio;
-    const h = maskImg.naturalHeight * ratio;
 
     return (
         <div

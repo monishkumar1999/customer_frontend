@@ -1,17 +1,39 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../../api/axios';
 
 const SignupPage = () => {
     const navigate = useNavigate();
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
+    const [mobileNumber, setMobileNumber] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleSignup = (e) => {
+    const handleSignup = async (e) => {
         e.preventDefault();
-        // Mock signup
-        console.log("Signing up with", name, email, password);
-        navigate('/');
+        setError('');
+        setLoading(true);
+
+        try {
+            const response = await api.post('/customer/signup', {
+                name,
+                email,
+                mobile_number: mobileNumber,
+                password
+            });
+
+            if (response.data.success || response.status === 200 || response.status === 201) {
+                console.log("Signup successful", response.data);
+                navigate('/login');
+            }
+        } catch (err) {
+            console.error("Signup error:", err);
+            setError(err.response?.data?.message || "Signup failed. Please try again.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -100,6 +122,11 @@ const SignupPage = () => {
                             <span className="text-xs uppercase font-semibold text-slate-400 whitespace-nowrap">Or sign up with</span>
                             <div className="h-px bg-slate-200 w-full"></div>
                         </div>
+                        {error && (
+                            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm font-medium">
+                                {error}
+                            </div>
+                        )}
                         <form className="space-y-5" onSubmit={handleSignup}>
                             <div className="space-y-1.5">
                                 <label className="block text-sm font-semibold text-slate-700" htmlFor="name">Full Name</label>
@@ -126,6 +153,22 @@ const SignupPage = () => {
                                         type="email"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="block text-sm font-semibold text-slate-700" htmlFor="mobile">Mobile Number</label>
+                                <div className="relative group">
+                                    <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#137fec] transition-colors">call</span>
+                                    <input
+                                        className="w-full h-12 pl-11 pr-4 rounded-xl bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-[#137fec] focus:ring-4 focus:ring-[#137fec]/10 transition-all duration-200 shadow-input font-medium"
+                                        id="mobile"
+                                        placeholder="9876543210"
+                                        type="tel"
+                                        value={mobileNumber}
+                                        onChange={(e) => setMobileNumber(e.target.value)}
+                                        required
                                     />
                                 </div>
                             </div>
@@ -144,8 +187,12 @@ const SignupPage = () => {
                                     <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer hover:text-slate-600">visibility_off</span>
                                 </div>
                             </div>
-                            <button className="w-full h-12 bg-gradient-to-r from-[#137fec] to-blue-600 hover:from-[#0b63c1] hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 text-base cursor-pointer" type="submit">
-                                Sign Up
+                            <button
+                                className="w-full h-12 bg-gradient-to-r from-[#137fec] to-blue-600 hover:from-[#0b63c1] hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 text-base cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                type="submit"
+                                disabled={loading}
+                            >
+                                {loading ? 'Creating Account...' : 'Sign Up'}
                             </button>
                         </form>
                         <div className="sm:hidden text-center text-sm font-medium">
