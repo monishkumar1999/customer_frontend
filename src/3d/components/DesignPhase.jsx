@@ -105,8 +105,12 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
     const productName = useStore(state => state.productName);
     const meshColors = useStore(state => state.meshColors);
     const setMeshColor = useStore(state => state.setMeshColor);
-    const meshStickers = useStore(state => state.meshStickers);
     const setMeshStickers = useStore(state => state.setMeshStickers);
+    const saveDesign = useStore(state => state.saveDesign);
+    const saveDesignToBackend = useStore(state => state.saveDesignToBackend);
+    const isSaving = useStore(state => state.isSaving);
+    const saveSuccess = useStore(state => state.saveSuccess);
+    const saveError = useStore(state => state.saveError);
 
     const { undo, redo, clear } = useStore.temporal.getState();
 
@@ -744,20 +748,47 @@ const DesignPhase = ({ productId, glbUrl, meshConfig, meshTextures, globalMateri
                         </button>
                         <div className="w-[1px] h-4 bg-zinc-200 mx-1" />
                         <button
-                            onClick={() => {
-                                // Save locally (optional)
-                                saveDesign(productId);
-                                // No backend save
+                            onClick={async () => {
+                                if (!productId) {
+                                    useStore.setState({ saveError: "Product ID is missing. Cannot save." });
+                                    return;
+                                }
+                                console.log("Save button clicked", productId);
+                                try {
+                                    // Save locally first (optional, but keep for offline access)
+                                    console.log("Saving locally...");
+                                    saveDesign(productId);
+                                    // Save to backend
+                                    console.log("Saving to backend...");
+                                    await saveDesignToBackend(productId);
+                                    console.log("Backend save completed");
+                                } catch (err) {
+                                    console.error("Error in save click handler:", err);
+                                }
                             }}
-                            className="p-1.5 hover:bg-indigo-50 hover:text-indigo-600 text-zinc-600 rounded-full transition-all"
-                            title="Save Local"
+                            disabled={isSaving}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all ${isSaving ? 'opacity-50 cursor-not-allowed bg-zinc-100' : 'hover:bg-indigo-50 hover:text-indigo-600 text-zinc-600'}`}
+                            title={isSaving ? "Saving..." : "Save to Cloud"}
                         >
-                            <Save size={16} />
+                            {isSaving ? (
+                                <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                                <Save size={16} className={saveSuccess ? "text-green-500" : ""} />
+                            )}
+                            <span className="text-xs font-semibold">{isSaving ? "Saving..." : "Save"}</span>
                         </button>
                     </div>
                 </div>
 
-                {/* Save Feedback Toast (Simple implementation) */}
+                {/* Save Feedback Toast */}
+                {(saveError || saveSuccess) && (
+                    <div className={`absolute top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full shadow-lg border text-xs font-bold transition-all ${saveError ? 'bg-red-50 border-red-200 text-red-600' : 'bg-green-50 border-green-200 text-green-600'}`}>
+                        {saveError ? `Error: ${saveError}` : 'Design saved to cloud!'}
+                        <button onClick={() => useStore.setState({ saveError: null, saveSuccess: false })} className="ml-2 hover:opacity-70">
+                            <X size={12} />
+                        </button>
+                    </div>
+                )}
 
                 {/* Canvas Area - Grid Layout for Pattern Zones */}
                 <div className="w-full h-full overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] bg-[length:32px_32px] p-4 sm:p-8 lg:p-12 lg:pr-[410px]">

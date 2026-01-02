@@ -133,11 +133,17 @@ export const useStore = create(
         };
 
         try {
+          if (!productId) {
+            set({ isSaving: false, saveError: "Product ID is missing." });
+            return false;
+          }
+
           const response = await api.post('/product/save-design', {
             productId,
             productName: state.productName,
             design_data,
-            // thumbnail_url: state.thumbnailUrl, // Add if thumbnail generation is implemented
+            designData: design_data, // Send both conventions to be safe
+            // thumbnail_url: state.thumbnailUrl, 
           });
 
           if (response.data.success) {
